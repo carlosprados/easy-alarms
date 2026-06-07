@@ -1,0 +1,42 @@
+version: '3'
+
+vars:
+  BIN: easy-alarms
+  PREFIX: '{{.HOME}}/.local'
+
+tasks:
+  build:
+    desc: Compile the binary
+    cmds:
+      - go build -o {{.BIN}} .
+
+  run:
+    desc: Build and run with the window visible
+    deps: [build]
+    cmds:
+      - ./{{.BIN}}
+
+  run-no-tray:
+    desc: Run without the system tray (to isolate tray-related freezes)
+    deps: [build]
+    cmds:
+      - ./{{.BIN}} --no-tray
+
+  install:
+    desc: Install to ~/.local/bin so autostart points at a stable path
+    deps: [build]
+    cmds:
+      - install -Dm755 {{.BIN}} {{.PREFIX}}/bin/{{.BIN}}
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./...
+
+  vet:
+    cmds:
+      - go vet ./...
+
+  clean:
+    cmds:
+      - rm -f {{.BIN}}
