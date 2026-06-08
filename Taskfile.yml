@@ -3,6 +3,8 @@ version: '3'
 vars:
   BIN: easy-alarms
   PREFIX: '{{.HOME}}/.local'
+  ICONROOT: '{{.HOME}}/.local/share/icons/hicolor'
+  APPS: '{{.HOME}}/.local/share/applications'
 
 tasks:
   build:
@@ -23,10 +25,35 @@ tasks:
       - ./{{.BIN}} --no-tray
 
   install:
-    desc: Install to ~/.local/bin so autostart points at a stable path
+    desc: Install binary, icon and desktop entry into ~/.local (XDG)
     deps: [build]
     cmds:
       - install -Dm755 {{.BIN}} {{.PREFIX}}/bin/{{.BIN}}
+      - install -Dm644 packaging/easy-alarms.svg {{.ICONROOT}}/scalable/apps/easy-alarms.svg
+      # Rasterise a few sizes when rsvg-convert is available (optional, SVG alone works).
+      - |
+        if command -v rsvg-convert >/dev/null; then
+          for s in 48 64 128 256; do
+            install -d {{.ICONROOT}}/${s}x${s}/apps
+            rsvg-convert -w $s -h $s packaging/easy-alarms.svg -o {{.ICONROOT}}/${s}x${s}/apps/easy-alarms.png
+          done
+        fi
+      - install -Dm644 packaging/easy-alarms.desktop {{.APPS}}/easy-alarms.desktop
+      # Refresh caches (best-effort; harmless if they fail).
+      - update-desktop-database {{.APPS}} 2>/dev/null || true
+      - gtk-update-icon-cache -f -t {{.ICONROOT}} 2>/dev/null || true
+      - 'echo "Installed. Launch from your app menu or run: easy-alarms"'
+
+  uninstall:
+    desc: Remove the installed binary, icon and desktop entry
+    cmds:
+      - rm -f {{.PREFIX}}/bin/{{.BIN}}
+      - rm -f {{.ICONROOT}}/scalable/apps/easy-alarms.svg
+      - rm -f {{.ICONROOT}}/48x48/apps/easy-alarms.png {{.ICONROOT}}/64x64/apps/easy-alarms.png {{.ICONROOT}}/128x128/apps/easy-alarms.png {{.ICONROOT}}/256x256/apps/easy-alarms.png
+      - rm -f {{.APPS}}/easy-alarms.desktop
+      - update-desktop-database {{.APPS}} 2>/dev/null || true
+      - gtk-update-icon-cache -f -t {{.ICONROOT}} 2>/dev/null || true
+      - 'echo "Uninstalled. (Autostart entry, if enabled, lives in ~/.config/autostart and is managed from the tray.)"'
 
   test:
     desc: Run unit tests

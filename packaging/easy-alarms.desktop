@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Easy Alarms
+GenericName=Alarm Clock
+Comment=Simple alarm clock and timer
+Exec=easy-alarms
+Icon=easy-alarms
+Terminal=false
+Categories=Utility;Clock;
+Keywords=alarm;clock;timer;reloj;alarma;
+StartupNotify=true

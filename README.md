@@ -38,12 +38,22 @@ focus: **the list tells you exactly when each alarm will ring.**
 task run            # build and launch with the window visible
 task run-no-tray    # launch without the system tray (diagnostics)
 task test           # run the unit tests
-task install        # install to ~/.local/bin
+task install        # install into ~/.local (binary + icon + app menu entry)
+task uninstall      # remove everything task install added
 ```
 
-> Install to `~/.local/bin` **before** enabling autostart, so the generated
-> `~/.config/autostart/easy-alarms.desktop` points at a stable path rather
-> than a throwaway build binary.
+`task install` performs a per-user XDG install (no root needed):
+
+| Artifact | Destination |
+|----------|-------------|
+| Binary | `~/.local/bin/easy-alarms` |
+| Icon (SVG + PNG 48/64/128/256) | `~/.local/share/icons/hicolor/.../apps/` |
+| App menu entry | `~/.local/share/applications/easy-alarms.desktop` |
+
+After installing, **Easy Alarms** shows up in your application menu. Enable
+*autostart on login* from the tray menu — the generated
+`~/.config/autostart/easy-alarms.desktop` points at the installed binary, so
+install first.
 
 ## Supported audio formats
 
