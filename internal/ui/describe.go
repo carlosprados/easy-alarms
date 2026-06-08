@@ -11,19 +11,48 @@ var weekdayNames = [7]string{
 }
 
 // describeNext renders the headline feature: when exactly an alarm will
-// ring, in human terms.
+// ring, in human terms with a live second-resolution countdown.
 func describeNext(next, now time.Time) string {
 	if next.IsZero() {
 		return "💤 Inactiva"
 	}
-	day := weekdayNames[next.Weekday()]
+	return fmt.Sprintf("🔔 Suena %s a las %s (en %s)",
+		dayLabel(next, now), next.Format("15:04"), humanDuration(next.Sub(now)))
+}
+
+// describeNextCoarse is the tray variant: minute resolution, so the tray menu
+// changes at most once a minute instead of once a second.
+func describeNextCoarse(next, now time.Time) string {
+	return fmt.Sprintf("%s a las %s (en %s)",
+		dayLabel(next, now), next.Format("15:04"), coarseDuration(next.Sub(now)))
+}
+
+func dayLabel(next, now time.Time) string {
 	switch {
 	case sameDay(next, now):
-		day = "hoy"
+		return "hoy"
 	case sameDay(next, now.AddDate(0, 0, 1)):
-		day = "mañana"
+		return "mañana"
+	default:
+		return weekdayNames[next.Weekday()]
 	}
-	return fmt.Sprintf("🔔 Suena %s a las %s (en %s)", day, next.Format("15:04"), humanDuration(next.Sub(now)))
+}
+
+// coarseDuration drops seconds: "10h 25m", "12m", "<1m".
+func coarseDuration(d time.Duration) string {
+	d = max(d, 0)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	switch {
+	case h >= 24:
+		return fmt.Sprintf("%dd %dh", h/24, h%24)
+	case h > 0:
+		return fmt.Sprintf("%dh %02dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm", m)
+	default:
+		return "<1m"
+	}
 }
 
 func sameDay(a, b time.Time) bool {

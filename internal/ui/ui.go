@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -27,6 +28,12 @@ type UI struct {
 
 	list *fyne.Container
 	rows []*row
+
+	// tray state, set in setupTray (nil when the tray is disabled)
+	desk     desktop.App
+	trayMenu *fyne.Menu
+	trayNext *fyne.MenuItem
+	trayLast string // last rendered "next alarm" label, to skip no-op refreshes
 }
 
 type row struct {
@@ -89,6 +96,7 @@ func (u *UI) commit() {
 	}
 	u.sched.Reschedule()
 	u.rebuildList()
+	u.updateTrayNext()
 }
 
 func (u *UI) rebuildList() {
@@ -196,6 +204,7 @@ func (u *UI) refreshLoop() {
 					r.when.SetText(next)
 				}
 			}
+			u.updateTrayNext()
 		})
 	}
 }

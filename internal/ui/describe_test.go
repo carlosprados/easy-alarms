@@ -1,0 +1,48 @@
+package ui
+
+import (
+	"testing"
+	"time"
+)
+
+func TestCoarseDuration(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{30 * time.Second, "<1m"},
+		{90 * time.Second, "1m"},
+		{12 * time.Minute, "12m"},
+		{2*time.Hour + 5*time.Minute, "2h 05m"},
+		{25*time.Hour + 3*time.Hour, "1d 4h"},
+		{-time.Minute, "<1m"}, // never negative
+	}
+	for _, c := range cases {
+		if got := coarseDuration(c.d); got != c.want {
+			t.Errorf("coarseDuration(%v) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+func TestDescribeNextCoarseHasNoSeconds(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 0, 0, 0, time.Local)
+	next := now.Add(12*time.Minute + 30*time.Second)
+	got := describeNextCoarse(next, now)
+	want := "hoy a las 10:12 (en 12m)" // seconds dropped → tray won't churn every second
+	if got != want {
+		t.Errorf("describeNextCoarse = %q, want %q", got, want)
+	}
+}
+
+func TestDayLabel(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 0, 0, 0, time.Local) // Monday
+	if got := dayLabel(now.Add(time.Hour), now); got != "hoy" {
+		t.Errorf("same day = %q, want hoy", got)
+	}
+	if got := dayLabel(now.AddDate(0, 0, 1), now); got != "mañana" {
+		t.Errorf("next day = %q, want mañana", got)
+	}
+	if got := dayLabel(now.AddDate(0, 0, 3), now); got != "el jueves" {
+		t.Errorf("three days = %q, want el jueves", got)
+	}
+}
