@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"sort"
 	"time"
 
@@ -39,7 +40,7 @@ type UI struct {
 
 type row struct {
 	alarm *alarm.Alarm
-	when  *widget.Label
+	when  *canvas.Text
 	last  string // last rendered text, to skip no-op refreshes
 }
 
@@ -148,20 +149,26 @@ func (u *UI) sortAlarms(alarms []*alarm.Alarm) {
 }
 
 func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
-	title := canvas.NewText(rowTitle(a), theme.Color(theme.ColorNameForeground))
-	title.TextSize = 17
-	title.TextStyle = fyne.TextStyle{Bold: true}
+	// Inactive alarms (won't actually ring) are dimmed.
+	active := !u.sched.NextFor(a).IsZero()
+	fg := theme.Color(theme.ColorNameForeground)
+	if !active {
+		fg = theme.Color(theme.ColorNameDisabled)
+	}
+
+	title := rowText(rowTitle(a), 17, true, fg)
 
 	whenText := describeNext(u.sched.NextFor(a), time.Now())
-	when := widget.NewLabel(whenText)
+	when := rowText(whenText, theme.TextSize(), false, fg)
 	u.rows = append(u.rows, &row{alarm: a, when: when, last: whenText})
 
 	left := container.NewVBox(title, when)
 	if a.Kind == alarm.KindClock {
 		if rep := repeatLabel(a.Repeat); rep != "" {
-			left.Add(widget.NewLabel("📅  " + rep))
+			left.Add(rowText("📅  "+rep, theme.TextSize(), false, fg))
 		}
 	}
+	left.Add(rowText("🎵  "+soundName(a.Sound), theme.TextSize(), false, fg))
 
 	edit := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
 		u.showEditDialog(a, false)
@@ -178,8 +185,17 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 
 	actions := container.NewHBox(u.stateControl(a), edit, del)
 
-	body := container.NewBorder(nil, nil, nil, actions, left)
+	// Double-clicking the info area also opens the editor.
+	info := newTappable(left, func() { u.showEditDialog(a, false) })
+	body := container.NewBorder(nil, nil, nil, actions, info)
 	return widget.NewCard("", "", container.NewPadded(body))
+}
+
+func rowText(s string, size float32, bold bool, col color.Color) *canvas.Text {
+	t := canvas.NewText(s, col)
+	t.TextSize = size
+	t.TextStyle = fyne.TextStyle{Bold: bold}
+	return t
 }
 
 // stateControl is the per-row enable toggle (alarms) or start/stop (timers).
@@ -240,7 +256,8 @@ func (u *UI) refreshLoop() {
 				next := describeNext(u.sched.NextFor(r.alarm), now)
 				if next != r.last {
 					r.last = next
-					r.when.SetText(next)
+					r.when.Text = next
+					r.when.Refresh()
 				}
 			}
 			u.updateTrayNext()
