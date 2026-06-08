@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -53,6 +54,51 @@ func coarseDuration(d time.Duration) string {
 	default:
 		return "<1m"
 	}
+}
+
+// shortDays are Monday-first abbreviations, indexed by time.Weekday.
+var shortDays = [7]string{"Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"}
+
+// repeatLabel summarises which days a clock alarm repeats on. It returns ""
+// for a one-shot (no days set), so callers can omit the line entirely.
+func repeatLabel(repeat [7]bool) string {
+	var days []time.Weekday
+	for d := time.Sunday; d <= time.Saturday; d++ {
+		if repeat[d] {
+			days = append(days, d)
+		}
+	}
+	switch len(days) {
+	case 0:
+		return ""
+	case 7:
+		return "Todos los días"
+	}
+	if onlyWeekdays(repeat) {
+		return "Días laborables (L–V)"
+	}
+	if onlyWeekend(repeat) {
+		return "Fines de semana"
+	}
+	// Otherwise list them Monday-first.
+	order := []time.Weekday{time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday, time.Saturday, time.Sunday}
+	var names []string
+	for _, d := range order {
+		if repeat[d] {
+			names = append(names, shortDays[d])
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+func onlyWeekdays(r [7]bool) bool {
+	return r[time.Monday] && r[time.Tuesday] && r[time.Wednesday] && r[time.Thursday] && r[time.Friday] &&
+		!r[time.Saturday] && !r[time.Sunday]
+}
+
+func onlyWeekend(r [7]bool) bool {
+	return r[time.Saturday] && r[time.Sunday] &&
+		!r[time.Monday] && !r[time.Tuesday] && !r[time.Wednesday] && !r[time.Thursday] && !r[time.Friday]
 }
 
 func sameDay(a, b time.Time) bool {

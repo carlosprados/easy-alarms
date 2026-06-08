@@ -34,6 +34,36 @@ func TestDescribeNextCoarseHasNoSeconds(t *testing.T) {
 	}
 }
 
+func TestRepeatLabel(t *testing.T) {
+	mask := func(days ...time.Weekday) [7]bool {
+		var r [7]bool
+		for _, d := range days {
+			r[d] = true
+		}
+		return r
+	}
+	cases := []struct {
+		name   string
+		repeat [7]bool
+		want   string
+	}{
+		{"one-shot", mask(), ""},
+		{"every day", mask(time.Sunday, time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday, time.Saturday), "Todos los días"},
+		{"weekdays", mask(time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday), "Días laborables (L–V)"},
+		{"weekend", mask(time.Saturday, time.Sunday), "Fines de semana"},
+		{"mon wed fri", mask(time.Monday, time.Wednesday, time.Friday), "Lun, Mié, Vie"},
+		{"single sunday listed Monday-first", mask(time.Sunday), "Dom"},
+		{"sat+sun+mon is not weekend", mask(time.Saturday, time.Sunday, time.Monday), "Lun, Sáb, Dom"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := repeatLabel(c.repeat); got != c.want {
+				t.Errorf("repeatLabel = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestDayLabel(t *testing.T) {
 	now := time.Date(2026, 6, 8, 10, 0, 0, 0, time.Local) // Monday
 	if got := dayLabel(now.Add(time.Hour), now); got != "hoy" {
