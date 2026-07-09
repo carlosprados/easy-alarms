@@ -144,11 +144,13 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 			dialog.ShowError(err, u.win)
 			return
 		}
-		// Saving always activates: alarms re-enable, timers (re)start.
+		// Saving always activates: alarms re-enable, timers (re)start. A
+		// pending snooze belongs to the pre-edit schedule, so drop it.
 		a.Enabled = true
 		if a.Kind == alarm.KindTimer {
 			a.FiresAt = time.Now().Add(a.Duration)
 		}
+		u.sched.ClearSnooze(a.ID)
 		if isNew {
 			u.store.Add(a)
 		}

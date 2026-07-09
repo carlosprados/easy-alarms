@@ -17,14 +17,20 @@ import (
 const snoozeFor = 5 * time.Minute
 
 // Ring is the scheduler callback: play sound, notify, pop the window with a
-// stop/snooze dialog. Runs on the scheduler goroutine, so UI work is wrapped
-// in fyne.Do.
+// stop/snooze dialog. It runs on the scheduler goroutine, so everything is
+// deferred to the Fyne main thread — alarms are only ever touched there.
 func (u *UI) Ring(a *alarm.Alarm) {
-	u.player.Play(a.Sound)
-	title := rowTitle(a)
-	u.app.SendNotification(fyne.NewNotification("Easy Alarms", title))
-
 	fyne.Do(func() {
+		// With several alarms ringing at once the dialogs stack; the first
+		// sound keeps playing and stops when the last dialog is dismissed.
+		if u.ringing == 0 {
+			u.player.Play(a.Sound)
+		}
+		u.ringing++
+
+		title := rowTitle(a)
+		u.app.SendNotification(fyne.NewNotification("Easy Alarms", title))
+
 		// Settle post-fire state before rescheduling: one-shots disarm,
 		// repeating clocks pick up their next occurrence naturally.
 		switch {
@@ -45,7 +51,10 @@ func (u *UI) Ring(a *alarm.Alarm) {
 		content := container.NewVBox(big, msg)
 		dialog.ShowCustomConfirm("¡Alarma!", "🔕 Parar", fmt.Sprintf("😴 Posponer %s", compactDuration(snoozeFor)), content,
 			func(stop bool) {
-				u.player.Stop()
+				u.ringing--
+				if u.ringing == 0 {
+					u.player.Stop()
+				}
 				if !stop {
 					u.sched.Snooze(a.ID, snoozeFor)
 				}

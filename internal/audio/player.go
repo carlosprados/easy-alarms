@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -20,6 +21,9 @@ const sampleRate = beep.SampleRate(44100)
 
 type Player struct {
 	initOnce sync.Once
+
+	mu  sync.Mutex
+	src io.Closer // file backing the currently playing stream, nil for the tone
 }
 
 func NewPlayer() *Player { return &Player{} }
@@ -35,12 +39,11 @@ func (p *Player) init() {
 // falls back to the built-in beep rather than failing.
 func (p *Player) Play(path string) {
 	p.init()
-	s, err := open(path)
+	s, src, err := open(path)
 	if err != nil {
-		s = fallbackTone()
+		s, src = fallbackTone(), nil
 	}
-	speaker.Clear()
-	speaker.Play(s)
+	p.swap(s, src)
 }
 
 // Preview is like Play but reports decode errors instead of silently falling
@@ -48,26 +51,41 @@ func (p *Player) Play(path string) {
 // path previews the built-in tone.
 func (p *Player) Preview(path string) error {
 	p.init()
-	s, err := open(path)
+	s, src, err := open(path)
 	if err != nil {
 		return err
 	}
-	speaker.Clear()
-	speaker.Play(s)
+	p.swap(s, src)
 	return nil
 }
 
 func (p *Player) Stop() {
-	speaker.Clear()
+	p.swap(nil, nil)
 }
 
-func open(path string) (beep.Streamer, error) {
+// swap silences the speaker, closes the file backing the previous stream and
+// starts the new one (nil s just stops). Clear runs before Close so the mixer
+// never pulls from a closed file.
+func (p *Player) swap(s beep.Streamer, src io.Closer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	speaker.Clear()
+	if p.src != nil {
+		p.src.Close()
+	}
+	p.src = src
+	if s != nil {
+		speaker.Play(s)
+	}
+}
+
+func open(path string) (beep.Streamer, io.Closer, error) {
 	if path == "" {
-		return fallbackTone(), nil
+		return fallbackTone(), nil, nil
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var (
 		s      beep.StreamSeekCloser
@@ -85,17 +103,17 @@ func open(path string) (beep.Streamer, error) {
 	}
 	if err != nil {
 		f.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	loop, err := beep.Loop2(s)
 	if err != nil {
 		f.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	if format.SampleRate != sampleRate {
-		return beep.Resample(4, format.SampleRate, sampleRate, loop), nil
+		return beep.Resample(4, format.SampleRate, sampleRate, loop), f, nil
 	}
-	return loop, nil
+	return loop, f, nil
 }
 
 func fallbackTone() beep.Streamer {

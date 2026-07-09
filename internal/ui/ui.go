@@ -31,6 +31,10 @@ type UI struct {
 	list *fyne.Container
 	rows []*row
 
+	// ringing counts open ring dialogs (main thread only); the alarm sound
+	// stops when the last one is dismissed.
+	ringing int
+
 	// tray state, set in setupTray (nil when the tray is disabled)
 	desk     desktop.App
 	trayMenu *fyne.Menu
@@ -211,6 +215,7 @@ func (u *UI) stateControl(a *alarm.Alarm) fyne.CanvasObject {
 		}
 		return widget.NewButtonWithIcon("", theme.MediaStopIcon(), func() {
 			a.FiresAt = time.Time{}
+			u.sched.ClearSnooze(a.ID)
 			u.commit()
 		})
 	default:
@@ -224,6 +229,9 @@ func (u *UI) stateControl(a *alarm.Alarm) fyne.CanvasObject {
 				return
 			}
 			a.Enabled = on
+			if !on {
+				u.sched.ClearSnooze(a.ID) // disabling also silences a pending snooze
+			}
 			u.commit()
 		}
 		return check
