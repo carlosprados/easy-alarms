@@ -149,6 +149,7 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 		a.Enabled = true
 		if a.Kind == alarm.KindTimer {
 			a.FiresAt = time.Now().Add(a.Duration)
+			a.Remaining = 0
 		}
 		u.sched.ClearSnooze(a.ID)
 		if isNew {

@@ -14,7 +14,11 @@ import (
 	"easy-alarms/internal/alarm"
 )
 
-const snoozeFor = 5 * time.Minute
+// ringSilenceAfter caps how long an unattended alarm keeps making noise; the
+// ring dialog stays up so it is still visible when the user comes back.
+const ringSilenceAfter = 3 * time.Minute
+
+var snoozeOptions = []time.Duration{5 * time.Minute, 10 * time.Minute, 15 * time.Minute}
 
 // Ring is the scheduler callback: play sound, notify, pop the window with a
 // stop/snooze dialog. It runs on the scheduler goroutine, so everything is
@@ -23,10 +27,8 @@ func (u *UI) Ring(a *alarm.Alarm) {
 	fyne.Do(func() {
 		// With several alarms ringing at once the dialogs stack; the first
 		// sound keeps playing and stops when the last dialog is dismissed.
-		if u.ringing == 0 {
-			u.player.Play(a.Sound)
-		}
-		u.ringing++
+		u.startRingSound(a.Sound)
+		u.ringDialogs++
 
 		title := rowTitle(a)
 		u.app.SendNotification(fyne.NewNotification("Easy Alarms", title))
@@ -48,17 +50,64 @@ func (u *UI) Ring(a *alarm.Alarm) {
 		big.Alignment = fyne.TextAlignCenter
 		msg := widget.NewLabel(fmt.Sprintf("%s\n%s", title, time.Now().Format("15:04")))
 		msg.Alignment = fyne.TextAlignCenter
-		content := container.NewVBox(big, msg)
-		dialog.ShowCustomConfirm("¡Alarma!", "🔕 Parar", fmt.Sprintf("😴 Posponer %s", compactDuration(snoozeFor)), content,
-			func(stop bool) {
-				u.ringing--
-				if u.ringing == 0 {
-					u.player.Stop()
-				}
-				if !stop {
-					u.sched.Snooze(a.ID, snoozeFor)
-				}
-				u.rebuildList()
-			}, u.win)
+
+		var d dialog.Dialog
+		snoozes := container.NewGridWithColumns(len(snoozeOptions))
+		for _, dur := range snoozeOptions {
+			snoozes.Add(widget.NewButton("😴 "+compactDuration(dur), func() {
+				u.sched.Snooze(a.ID, dur)
+				d.Hide()
+			}))
+		}
+		content := container.NewVBox(big, msg, snoozes)
+
+		d = dialog.NewCustom("¡Alarma!", "🔕 Parar", content, u.win)
+		// Every way out of the dialog (Parar, a snooze button, Esc) lands
+		// here, so the sound bookkeeping cannot be bypassed.
+		d.SetOnClosed(func() {
+			u.ringDialogs--
+			if u.ringDialogs == 0 {
+				u.stopRingSound()
+			}
+			u.rebuildList()
+		})
+		d.Show()
 	})
+}
+
+// startRingSound plays the alarm sound unless one is already ringing and
+// (re)arms the auto-silence cap. Main thread only.
+func (u *UI) startRingSound(sound string) {
+	if !u.soundOn {
+		u.player.Play(sound)
+		u.soundOn = true
+	}
+	if u.silence == nil {
+		u.silence = time.AfterFunc(ringSilenceAfter, func() {
+			fyne.Do(u.silenceUnattended)
+		})
+		return
+	}
+	u.silence.Reset(ringSilenceAfter)
+}
+
+func (u *UI) stopRingSound() {
+	if u.silence != nil {
+		u.silence.Stop()
+	}
+	if u.soundOn {
+		u.player.Stop()
+		u.soundOn = false
+	}
+}
+
+// silenceUnattended stops the sound of a ring nobody dismissed, leaving the
+// dialog up, and lets the user know they missed it.
+func (u *UI) silenceUnattended() {
+	if !u.soundOn || u.ringDialogs == 0 {
+		return
+	}
+	u.player.Stop()
+	u.soundOn = false
+	u.app.SendNotification(fyne.NewNotification("Easy Alarms", "🔕 Alarma sin atender: sonido silenciado"))
 }

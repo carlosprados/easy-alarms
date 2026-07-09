@@ -28,6 +28,16 @@ func (u *UI) setupTray() {
 	auto := fyne.NewMenuItem("Arrancar al iniciar sesión", nil)
 	auto.Checked = autostart.Enabled()
 
+	// One-click timers straight from the tray, no dialog involved.
+	quick := fyne.NewMenuItem("⏱ Timer rápido", nil)
+	var quickItems []*fyne.MenuItem
+	for _, d := range []time.Duration{5 * time.Minute, 10 * time.Minute, 25 * time.Minute, time.Hour} {
+		quickItems = append(quickItems, fyne.NewMenuItem(compactDuration(d), func() {
+			fyne.Do(func() { u.startQuickTimer(d) })
+		}))
+	}
+	quick.ChildMenu = fyne.NewMenu("", quickItems...)
+
 	u.trayMenu = fyne.NewMenu("Easy Alarms",
 		u.trayNext,
 		fyne.NewMenuItemSeparator(),
@@ -35,6 +45,7 @@ func (u *UI) setupTray() {
 			u.win.Show()
 			u.win.RequestFocus()
 		}),
+		quick,
 		fyne.NewMenuItemSeparator(),
 		auto,
 	)
@@ -76,6 +87,15 @@ func (u *UI) updateTrayNext() {
 	u.trayLast = text
 	u.trayNext.Label = text
 	u.desk.SetSystemTrayMenu(u.trayMenu)
+}
+
+// startQuickTimer creates and starts an unlabeled timer in one go.
+func (u *UI) startQuickTimer(d time.Duration) {
+	a := alarm.New(alarm.KindTimer)
+	a.Duration = d
+	a.FiresAt = time.Now().Add(d)
+	u.store.Add(a)
+	u.commit()
 }
 
 // soonest returns the alarm with the earliest upcoming trigger and that time,

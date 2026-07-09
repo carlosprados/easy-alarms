@@ -15,11 +15,18 @@ focus: **the list tells you exactly when each alarm will ring.**
 ## Features
 
 - **Clock alarms** (HH:MM) with optional per-weekday repeat (L M X J V S D).
-- **Countdown timers** (`10m`, `1h30m`, `45s`).
+- **Countdown timers** (`10m`, `1h30m`, `45s`) with **pause/resume**.
+- **Quick timers from the tray**: 5m / 10m / 25m / 1h, one click, no dialog.
 - Every row shows **when it next rings** and the countdown, updated live.
+- **Saving activates**: editing an alarm re-enables it; editing a timer
+  (re)starts it. Enter in any field saves the dialog.
 - **Per-alarm sound**: pick any audio file, or use the built-in beep. Preview
-  it from the edit dialog with a single play/stop button.
-- **Snooze** (5 min) from the ringing dialog.
+  it from the edit dialog with a single play/stop button. Alarms **fade in**
+  over 10 s instead of blasting at full volume.
+- **Snooze** (5 / 10 / 15 min) from the ringing dialog.
+- An unattended alarm **auto-silences after 3 min** (the dialog stays up and
+  a "missed alarm" notification is sent).
+- **Duplicate** any alarm from its row to create variants quickly.
 - **System-tray** icon; closing the window minimises to the tray.
 - **Autostart on login** — toggle it from the tray menu.
 - Survives system suspend: a missed alarm rings right after resume.

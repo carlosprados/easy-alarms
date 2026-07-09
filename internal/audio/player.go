@@ -17,7 +17,10 @@ import (
 	"github.com/gopxl/beep/v2/wav"
 )
 
-const sampleRate = beep.SampleRate(44100)
+const (
+	sampleRate = beep.SampleRate(44100)
+	ringFadeIn = 10 * time.Second // ramp so early-morning alarms don't blast
+)
 
 type Player struct {
 	initOnce sync.Once
@@ -34,16 +37,17 @@ func (p *Player) init() {
 	})
 }
 
-// Play loops the given audio file until Stop is called. It is used for
-// ringing alarms, so it must always make noise: an empty or undecodable path
-// falls back to the built-in beep rather than failing.
+// Play loops the given audio file until Stop is called, fading the volume in
+// gradually. It is used for ringing alarms, so it must always make noise: an
+// empty or undecodable path falls back to the built-in beep rather than
+// failing.
 func (p *Player) Play(path string) {
 	p.init()
 	s, src, err := open(path)
 	if err != nil {
 		s, src = fallbackTone(), nil
 	}
-	p.swap(s, src)
+	p.swap(&fadeIn{s: s, ramp: sampleRate.N(ringFadeIn)}, src)
 }
 
 // Preview is like Play but reports decode errors instead of silently falling
@@ -115,6 +119,27 @@ func open(path string) (beep.Streamer, io.Closer, error) {
 	}
 	return loop, f, nil
 }
+
+// fadeIn ramps the wrapped streamer from silence to full volume over ramp
+// samples. The quadratic curve sounds smoother to the ear than a linear one.
+type fadeIn struct {
+	s         beep.Streamer
+	pos, ramp int
+}
+
+func (f *fadeIn) Stream(samples [][2]float64) (int, bool) {
+	n, ok := f.s.Stream(samples)
+	for i := 0; i < n && f.pos < f.ramp; i++ {
+		g := float64(f.pos) / float64(f.ramp)
+		g *= g
+		samples[i][0] *= g
+		samples[i][1] *= g
+		f.pos++
+	}
+	return n, ok
+}
+
+func (f *fadeIn) Err() error { return f.s.Err() }
 
 func fallbackTone() beep.Streamer {
 	return &beepingTone{

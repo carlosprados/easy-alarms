@@ -31,9 +31,11 @@ type UI struct {
 	list *fyne.Container
 	rows []*row
 
-	// ringing counts open ring dialogs (main thread only); the alarm sound
-	// stops when the last one is dismissed.
-	ringing int
+	// ring state (main thread only): open ring dialogs, whether the alarm
+	// sound is playing, and the auto-silence cap timer.
+	ringDialogs int
+	soundOn     bool
+	silence     *time.Timer
 
 	// tray state, set in setupTray (nil when the tray is disabled)
 	desk     desktop.App
@@ -133,7 +135,11 @@ func (u *UI) sortAlarms(alarms []*alarm.Alarm) {
 		}
 		switch a.Kind {
 		case alarm.KindTimer:
-			return 1, now.Add(a.Duration)
+			d := a.Duration
+			if a.Remaining > 0 {
+				d = a.Remaining
+			}
+			return 1, now.Add(d)
 		default:
 			c := time.Date(now.Year(), now.Month(), now.Day(), a.Hour, a.Minute, 0, 0, now.Location())
 			if !c.After(now) {
@@ -162,7 +168,7 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 
 	title := rowText(rowTitle(a), 17, true, fg)
 
-	whenText := describeNext(u.sched.NextFor(a), time.Now())
+	whenText := u.rowWhen(a, time.Now())
 	when := rowText(whenText, theme.TextSize(), false, fg)
 	u.rows = append(u.rows, &row{alarm: a, when: when, last: whenText})
 
@@ -174,6 +180,12 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 	}
 	left.Add(rowText("🎵  "+soundName(a.Sound), theme.TextSize(), false, fg))
 
+	dup := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+		c := alarm.New(a.Kind)
+		c.Label, c.Hour, c.Minute, c.Repeat = a.Label, a.Hour, a.Minute, a.Repeat
+		c.Duration, c.Sound = a.Duration, a.Sound
+		u.showEditDialog(c, true) // cancelling the editor discards the copy
+	})
 	edit := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
 		u.showEditDialog(a, false)
 	})
@@ -187,7 +199,7 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 		}, u.win)
 	})
 
-	actions := container.NewHBox(u.stateControl(a), edit, del)
+	actions := container.NewHBox(u.stateControl(a), dup, edit, del)
 
 	// Double-clicking the info area also opens the editor.
 	info := newTappable(left, func() { u.showEditDialog(a, false) })
@@ -202,22 +214,42 @@ func rowText(s string, size float32, bold bool, col color.Color) *canvas.Text {
 	return t
 }
 
-// stateControl is the per-row enable toggle (alarms) or start/stop (timers).
+// stateControl is the per-row enable toggle (alarms) or the
+// start/pause/resume/stop buttons (timers).
 func (u *UI) stateControl(a *alarm.Alarm) fyne.CanvasObject {
 	switch a.Kind {
 	case alarm.KindTimer:
-		if a.FiresAt.IsZero() {
+		stop := widget.NewButtonWithIcon("", theme.MediaStopIcon(), func() {
+			a.FiresAt = time.Time{}
+			a.Remaining = 0
+			u.sched.ClearSnooze(a.ID)
+			u.commit()
+		})
+		switch {
+		case !a.FiresAt.IsZero(): // running
+			pause := widget.NewButtonWithIcon("", theme.MediaPauseIcon(), func() {
+				if left := time.Until(a.FiresAt); left > 0 {
+					a.Remaining = left
+				}
+				a.FiresAt = time.Time{}
+				u.commit()
+			})
+			return container.NewHBox(pause, stop)
+		case a.Remaining > 0: // paused
+			resume := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), func() {
+				a.Enabled = true
+				a.FiresAt = time.Now().Add(a.Remaining)
+				a.Remaining = 0
+				u.commit()
+			})
+			return container.NewHBox(resume, stop)
+		default: // idle
 			return widget.NewButtonWithIcon("", theme.MediaPlayIcon(), func() {
 				a.Enabled = true
 				a.FiresAt = time.Now().Add(a.Duration)
 				u.commit()
 			})
 		}
-		return widget.NewButtonWithIcon("", theme.MediaStopIcon(), func() {
-			a.FiresAt = time.Time{}
-			u.sched.ClearSnooze(a.ID)
-			u.commit()
-		})
 	default:
 		// Set OnChanged AFTER SetChecked: in Fyne SetChecked fires OnChanged,
 		// and commit() rebuilds the list, which would recurse infinitely and
@@ -236,6 +268,17 @@ func (u *UI) stateControl(a *alarm.Alarm) fyne.CanvasObject {
 		}
 		return check
 	}
+}
+
+// rowWhen renders a row's status line: the live countdown, or the paused
+// state, which has no next trigger but should still show the time left.
+func (u *UI) rowWhen(a *alarm.Alarm, now time.Time) string {
+	if a.Kind == alarm.KindTimer && a.FiresAt.IsZero() && a.Remaining > 0 {
+		if u.sched.NextFor(a).IsZero() { // not snoozed
+			return "⏸ En pausa (quedan " + compactDuration(a.Remaining) + ")"
+		}
+	}
+	return describeNext(u.sched.NextFor(a), now)
 }
 
 func rowTitle(a *alarm.Alarm) string {
@@ -261,7 +304,7 @@ func (u *UI) refreshLoop() {
 		fyne.Do(func() {
 			now := time.Now()
 			for _, r := range u.rows {
-				next := describeNext(u.sched.NextFor(r.alarm), now)
+				next := u.rowWhen(r.alarm, now)
 				if next != r.last {
 					r.last = next
 					r.when.Text = next
