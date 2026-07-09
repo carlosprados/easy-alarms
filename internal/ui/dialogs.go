@@ -101,6 +101,12 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 	case alarm.KindClock:
 		timeEntry = widget.NewEntry()
 		timeEntry.SetText(fmt.Sprintf("%02d:%02d", a.Hour, a.Minute))
+		timeEntry.Validator = func(s string) error {
+			if !timePattern.MatchString(s) {
+				return errors.New("formato HH:MM")
+			}
+			return nil
+		}
 		days := container.NewHBox()
 		for i, d := range dayOrder {
 			c := widget.NewCheck(d.short, nil)
@@ -115,6 +121,12 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 	case alarm.KindTimer:
 		durEntry = widget.NewEntry()
 		durEntry.PlaceHolder = "10m, 1h30m..."
+		durEntry.Validator = func(s string) error {
+			if d, err := time.ParseDuration(s); err != nil || d <= 0 {
+				return errors.New("ej: 10m, 1h30m")
+			}
+			return nil
+		}
 		if a.Duration > 0 {
 			durEntry.SetText(a.Duration.String())
 		}
@@ -123,7 +135,7 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 	items = append(items, widget.NewFormItem("🎵 Sonido", soundRow))
 
 	title := map[alarm.Kind]string{alarm.KindClock: "⏰ Alarma", alarm.KindTimer: "⏱ Timer"}[a.Kind]
-	dialog.ShowForm(title, "Guardar", "Cancelar", items, func(ok bool) {
+	d := dialog.NewForm(title, "Guardar", "Cancelar", items, func(ok bool) {
 		u.player.Stop() // silence any running preview when the dialog closes
 		if !ok {
 			return
@@ -132,14 +144,28 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 			dialog.ShowError(err, u.win)
 			return
 		}
+		// Saving always activates: alarms re-enable, timers (re)start.
+		a.Enabled = true
+		if a.Kind == alarm.KindTimer {
+			a.FiresAt = time.Now().Add(a.Duration)
+		}
 		if isNew {
-			if a.Kind == alarm.KindTimer {
-				a.FiresAt = time.Now().Add(a.Duration) // creating a timer starts it
-			}
 			u.store.Add(a)
 		}
 		u.commit()
 	}, u.win)
+
+	// Enter in any text field saves the dialog (no-op while input is invalid,
+	// since Submit respects the form's validation state).
+	submit := func(string) { d.Submit() }
+	label.OnSubmitted = submit
+	if timeEntry != nil {
+		timeEntry.OnSubmitted = submit
+	}
+	if durEntry != nil {
+		durEntry.OnSubmitted = submit
+	}
+	d.Show()
 }
 
 func applyEdit(a *alarm.Alarm, label, sound string, timeEntry, durEntry *widget.Entry, dayChecks [7]*widget.Check) error {
@@ -159,9 +185,6 @@ func applyEdit(a *alarm.Alarm, label, sound string, timeEntry, durEntry *widget.
 			return errors.New("duración inválida, ej: 10m, 1h30m")
 		}
 		a.Duration = d
-		if !a.FiresAt.IsZero() {
-			a.FiresAt = time.Now().Add(d) // restart running timer with new duration
-		}
 	}
 	a.Label = label
 	a.Sound = sound
