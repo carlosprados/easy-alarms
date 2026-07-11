@@ -11,6 +11,20 @@ var weekdayNames = [7]string{
 	"el jueves", "el viernes", "el sábado",
 }
 
+var longWeekdays = [7]string{
+	"Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado",
+}
+
+var longMonths = [12]string{
+	"enero", "febrero", "marzo", "abril", "mayo", "junio",
+	"julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+}
+
+// longDate renders a header-style Spanish date: "Sábado, 11 de julio".
+func longDate(t time.Time) string {
+	return fmt.Sprintf("%s, %d de %s", longWeekdays[t.Weekday()], t.Day(), longMonths[t.Month()-1])
+}
+
 // describeNext renders the headline feature: when exactly an alarm will
 // ring, in human terms with a live second-resolution countdown.
 func describeNext(next, now time.Time) string {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"image/color"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -15,6 +17,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"easy-alarms/internal/alarm"
+	"easy-alarms/internal/astro"
 	"easy-alarms/internal/audio"
 	"easy-alarms/internal/store"
 )
@@ -28,8 +31,22 @@ type UI struct {
 
 	TrayEnabled bool
 
+	settings store.Settings
+
 	list *fyne.Container
 	rows []*row
+
+	// header clock (main thread only), with last-rendered caches to skip
+	// no-op refreshes — same pattern as the row countdowns.
+	clock     *canvas.Text
+	clockDate *canvas.Text
+	bar       *dayBar
+	riseLbl   *canvas.Text
+	setLbl    *canvas.Text
+	clockLast string
+	dateLast  string
+	riseLast  string
+	setLast   string
 
 	// ring state (main thread only): open ring dialogs, whether the alarm
 	// sound is playing, and the auto-silence cap timer.
@@ -72,10 +89,33 @@ func (u *UI) Run(hidden bool) {
 	newTimer := widget.NewButton("⏱  Nuevo timer", func() {
 		u.showEditDialog(alarm.New(alarm.KindTimer), true)
 	})
-	toolbar := container.NewGridWithColumns(2, newAlarm, newTimer)
+	gear := widget.NewButtonWithIcon("", theme.SettingsIcon(), u.showSettings)
+	toolbar := container.NewBorder(nil, nil, nil, gear,
+		container.NewGridWithColumns(2, newAlarm, newTimer))
 
+	u.settings = store.LoadSettings(store.Settings{
+		Lat: astro.Madrid.Lat, Lon: astro.Madrid.Lon, ShowSeconds: true,
+	})
+
+	// Header secondary text (date+moon, sunrise/sunset) uses full foreground,
+	// not the dimmed/disabled colour: on some monitors the dim grey is barely
+	// legible. Hierarchy is carried by the clock's larger, bold size instead.
+	fg := theme.Color(theme.ColorNameForeground)
+	u.clock = rowText("", 40, true, fg)
+	u.clock.Alignment = fyne.TextAlignCenter
+	u.clockDate = rowText("", theme.TextSize(), false, fg)
+	u.clockDate.Alignment = fyne.TextAlignCenter
+	u.bar = newDayBar(u.location(), time.Now())
+	u.riseLbl = rowText("", theme.TextSize(), false, fg)
+	u.setLbl = rowText("", theme.TextSize(), false, fg)
+	u.setLbl.Alignment = fyne.TextAlignTrailing
+	sunRow := container.NewBorder(nil, nil, u.riseLbl, u.setLbl)
+	u.updateClock(time.Now()) // paint once before Show, so it never flashes empty
+	header := container.NewPadded(container.NewVBox(u.clock, u.clockDate, u.bar, sunRow))
+
+	top := container.NewVBox(header, container.NewPadded(toolbar))
 	u.win.SetContent(container.NewBorder(
-		container.NewPadded(toolbar), nil, nil, nil,
+		top, nil, nil, nil,
 		container.NewVScroll(u.list),
 	))
 	// Resize AFTER SetContent (otherwise Fyne keeps the content's min size)
@@ -295,6 +335,104 @@ func rowTitle(a *alarm.Alarm) string {
 	}
 }
 
+// updateClock refreshes the header clock, date, moon phase, day bar and
+// sunrise/sunset labels, touching each canvas only when its text/state
+// actually changed.
+func (u *UI) updateClock(now time.Time) {
+	layout := "15:04"
+	if u.settings.ShowSeconds {
+		layout = "15:04:05"
+	}
+	if t := now.Format(layout); t != u.clockLast {
+		u.clockLast = t
+		u.clock.Text = t
+		u.clock.Refresh()
+	}
+	moon := astro.MoonPhase(now)
+	if d := fmt.Sprintf("%s   %s %.0f%%", longDate(now), moon.Emoji, moon.Illumination*100); d != u.dateLast {
+		u.dateLast = d
+		u.clockDate.Text = d
+		u.clockDate.Refresh()
+	}
+	u.bar.tick(now)
+	rise, set := "—", "—"
+	if u.bar.haveSun {
+		rise = "☀ " + u.bar.sunrise.Format("15:04")
+		set = u.bar.sunset.Format("15:04") + " 🌙"
+	}
+	if rise != u.riseLast {
+		u.riseLast = rise
+		u.riseLbl.Text = rise
+		u.riseLbl.Refresh()
+	}
+	if set != u.setLast {
+		u.setLast = set
+		u.setLbl.Text = set
+		u.setLbl.Refresh()
+	}
+}
+
+// location is the configured location for sun times.
+func (u *UI) location() astro.Location {
+	return astro.Location{Lat: u.settings.Lat, Lon: u.settings.Lon}
+}
+
+// showSettings opens the preferences dialog: location (for sunrise/sunset)
+// and whether the clock shows seconds. Changes are persisted and applied live.
+func (u *UI) showSettings() {
+	lat := widget.NewEntry()
+	lat.SetText(strconv.FormatFloat(u.settings.Lat, 'f', -1, 64))
+	lon := widget.NewEntry()
+	lon.SetText(strconv.FormatFloat(u.settings.Lon, 'f', -1, 64))
+
+	coord := func(name string, min, max float64) fyne.StringValidator {
+		return func(s string) error {
+			v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+			if err != nil {
+				return fmt.Errorf("%s no es un número válido", name)
+			}
+			if v < min || v > max {
+				return fmt.Errorf("%s fuera de rango (%g a %g)", name, min, max)
+			}
+			return nil
+		}
+	}
+	lat.Validator = coord("La latitud", -90, 90)
+	lon.Validator = coord("La longitud", -180, 180)
+
+	seconds := widget.NewCheck("", nil)
+	seconds.SetChecked(u.settings.ShowSeconds)
+
+	form := dialog.NewForm("Ajustes", "Guardar", "Cancelar", []*widget.FormItem{
+		{Text: "Latitud", Widget: lat, HintText: "Norte positivo (Madrid ≈ 40.42)"},
+		{Text: "Longitud", Widget: lon, HintText: "Este positivo (Madrid ≈ -3.70)"},
+		{Text: "Mostrar segundos", Widget: seconds},
+	}, func(ok bool) {
+		if !ok {
+			return
+		}
+		u.settings.Lat, _ = strconv.ParseFloat(strings.TrimSpace(lat.Text), 64)
+		u.settings.Lon, _ = strconv.ParseFloat(strings.TrimSpace(lon.Text), 64)
+		u.settings.ShowSeconds = seconds.Checked
+		if err := store.SaveSettings(u.settings); err != nil {
+			dialog.ShowError(err, u.win)
+		}
+		u.applySettings()
+	}, u.win)
+	form.Resize(fyne.NewSize(420, 260))
+	form.Show()
+}
+
+// applySettings re-renders the header after a settings change: relocates the
+// sun, and forces a full clock repaint (the second/no-second format may have
+// flipped) by clearing the render caches.
+func (u *UI) applySettings() {
+	now := time.Now()
+	u.bar.setLocation(u.location(), now)
+	u.clockLast, u.dateLast, u.riseLast, u.setLast = "", "", "", ""
+	u.updateClock(now)
+}
+
 // refreshLoop keeps the "rings in..." labels ticking. It only touches labels
 // whose text actually changed, so an idle window does no rendering work.
 func (u *UI) refreshLoop() {
@@ -303,6 +441,7 @@ func (u *UI) refreshLoop() {
 	for range t.C {
 		fyne.Do(func() {
 			now := time.Now()
+			u.updateClock(now)
 			for _, r := range u.rows {
 				next := u.rowWhen(r.alarm, now)
 				if next != r.last {
