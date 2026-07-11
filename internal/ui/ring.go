@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"easy-alarms/internal/alarm"
+	"easy-alarms/internal/humanize"
 )
 
 // ringSilenceAfter caps how long an unattended alarm keeps making noise; the
@@ -54,7 +55,7 @@ func (u *UI) Ring(a *alarm.Alarm) {
 		var d dialog.Dialog
 		snoozes := container.NewGridWithColumns(len(snoozeOptions))
 		for _, dur := range snoozeOptions {
-			snoozes.Add(widget.NewButton("😴 "+compactDuration(dur), func() {
+			snoozes.Add(widget.NewButton("😴 "+humanize.Compact(dur), func() {
 				u.sched.Snooze(a.ID, dur)
 				d.Hide()
 			}))
@@ -62,9 +63,14 @@ func (u *UI) Ring(a *alarm.Alarm) {
 		content := container.NewVBox(big, msg, snoozes)
 
 		d = dialog.NewCustom("¡Alarma!", "🔕 Parar", content, u.win)
-		// Every way out of the dialog (Parar, a snooze button, Esc) lands
-		// here, so the sound bookkeeping cannot be bypassed.
+		u.ringing[a.ID] = d
+		// Every way out of the dialog (Parar, a snooze button, Esc, or a
+		// programmatic dismiss) lands here, so the sound bookkeeping cannot be
+		// bypassed.
 		d.SetOnClosed(func() {
+			if u.ringing[a.ID] == d {
+				delete(u.ringing, a.ID)
+			}
 			u.ringDialogs--
 			if u.ringDialogs == 0 {
 				u.stopRingSound()
@@ -110,4 +116,37 @@ func (u *UI) silenceUnattended() {
 	u.player.Stop()
 	u.soundOn = false
 	u.app.SendNotification(fyne.NewNotification("Easy Alarms", "🔕 Alarma sin atender: sonido silenciado"))
+}
+
+// dismissRinging closes a ringing alarm's dialog as if the user pressed Parar.
+// Main thread only. Returns whether an alarm with that ID was ringing.
+func (u *UI) dismissRinging(id string) bool {
+	d, ok := u.ringing[id]
+	if !ok {
+		return false
+	}
+	d.Hide() // fires SetOnClosed → sound bookkeeping + list refresh
+	return true
+}
+
+// snoozeRinging snoozes a ringing alarm by d and closes its dialog, exactly as
+// the in-dialog snooze buttons do. Main thread only. Returns whether an alarm
+// with that ID was ringing.
+func (u *UI) snoozeRinging(id string, d time.Duration) bool {
+	dlg, ok := u.ringing[id]
+	if !ok {
+		return false
+	}
+	u.sched.Snooze(id, d)
+	dlg.Hide()
+	return true
+}
+
+// ringingIDs returns the IDs of alarms with an open ring dialog. Main thread only.
+func (u *UI) ringingIDs() []string {
+	ids := make([]string, 0, len(u.ringing))
+	for id := range u.ringing {
+		ids = append(ids, id)
+	}
+	return ids
 }

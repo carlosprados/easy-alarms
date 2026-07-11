@@ -19,6 +19,7 @@ import (
 	"easy-alarms/internal/alarm"
 	"easy-alarms/internal/astro"
 	"easy-alarms/internal/audio"
+	"easy-alarms/internal/humanize"
 	"easy-alarms/internal/store"
 )
 
@@ -53,6 +54,9 @@ type UI struct {
 	ringDialogs int
 	soundOn     bool
 	silence     *time.Timer
+	// ringing maps an alarm ID to its open ring dialog, so the control API can
+	// dismiss/snooze a ringing alarm programmatically. Main thread only.
+	ringing map[string]dialog.Dialog
 
 	// tray state, set in setupTray (nil when the tray is disabled)
 	desk     desktop.App
@@ -69,11 +73,12 @@ type row struct {
 
 func New(a fyne.App, st *store.Store, sched *alarm.Scheduler, player *audio.Player) *UI {
 	return &UI{
-		app:    a,
-		store:  st,
-		sched:  sched,
-		player: player,
-		list:   container.NewVBox(),
+		app:     a,
+		store:   st,
+		sched:   sched,
+		player:  player,
+		list:    container.NewVBox(),
+		ringing: make(map[string]dialog.Dialog),
 	}
 }
 
@@ -315,7 +320,7 @@ func (u *UI) stateControl(a *alarm.Alarm) fyne.CanvasObject {
 func (u *UI) rowWhen(a *alarm.Alarm, now time.Time) string {
 	if a.Kind == alarm.KindTimer && a.FiresAt.IsZero() && a.Remaining > 0 {
 		if u.sched.NextFor(a).IsZero() { // not snoozed
-			return "⏸ En pausa (quedan " + compactDuration(a.Remaining) + ")"
+			return "⏸ En pausa (quedan " + humanize.Compact(a.Remaining) + ")"
 		}
 	}
 	return describeNext(u.sched.NextFor(a), now)
@@ -328,7 +333,7 @@ func rowTitle(a *alarm.Alarm) string {
 	}
 	switch a.Kind {
 	case alarm.KindTimer:
-		return fmt.Sprintf("⏱  %s · %s", label, compactDuration(a.Duration))
+		return fmt.Sprintf("⏱  %s · %s", label, humanize.Compact(a.Duration))
 	default:
 		// No time here: the "when" line below already shows it.
 		return "⏰  " + label

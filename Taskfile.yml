@@ -2,15 +2,20 @@ version: '3'
 
 vars:
   BIN: easy-alarms
+  CTL: alarmctl
   PREFIX: '{{.HOME}}/.local'
   ICONROOT: '{{.HOME}}/.local/share/icons/hicolor'
   APPS: '{{.HOME}}/.local/share/applications'
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  LDFLAGS: -X main.version={{.VERSION}}
 
 tasks:
   build:
-    desc: Compile the binary
+    desc: Compile both binaries (GUI app + alarmctl CLI)
     cmds:
-      - go build -o {{.BIN}} .
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.BIN}} ./cmd/easy-alarms
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.CTL}} ./cmd/alarmctl
 
   run:
     desc: Build and run with the window visible
@@ -29,6 +34,7 @@ tasks:
     deps: [build]
     cmds:
       - install -Dm755 {{.BIN}} {{.PREFIX}}/bin/{{.BIN}}
+      - install -Dm755 {{.CTL}} {{.PREFIX}}/bin/{{.CTL}}
       - install -Dm644 packaging/easy-alarms.svg {{.ICONROOT}}/scalable/apps/easy-alarms.svg
       # Rasterise a few sizes when rsvg-convert is available (optional, SVG alone works).
       - |
@@ -48,6 +54,7 @@ tasks:
     desc: Remove the installed binary, icon and desktop entry
     cmds:
       - rm -f {{.PREFIX}}/bin/{{.BIN}}
+      - rm -f {{.PREFIX}}/bin/{{.CTL}}
       - rm -f {{.ICONROOT}}/scalable/apps/easy-alarms.svg
       - rm -f {{.ICONROOT}}/48x48/apps/easy-alarms.png {{.ICONROOT}}/64x64/apps/easy-alarms.png {{.ICONROOT}}/128x128/apps/easy-alarms.png {{.ICONROOT}}/256x256/apps/easy-alarms.png
       - rm -f {{.APPS}}/easy-alarms.desktop
@@ -66,4 +73,4 @@ tasks:
 
   clean:
     cmds:
-      - rm -f {{.BIN}}
+      - rm -f {{.BIN}} {{.CTL}}

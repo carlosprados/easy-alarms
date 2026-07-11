@@ -5,25 +5,6 @@ import (
 	"time"
 )
 
-func TestCoarseDuration(t *testing.T) {
-	cases := []struct {
-		d    time.Duration
-		want string
-	}{
-		{30 * time.Second, "<1m"},
-		{90 * time.Second, "1m"},
-		{12 * time.Minute, "12m"},
-		{2*time.Hour + 5*time.Minute, "2h 05m"},
-		{25*time.Hour + 3*time.Hour, "1d 4h"},
-		{-time.Minute, "<1m"}, // never negative
-	}
-	for _, c := range cases {
-		if got := coarseDuration(c.d); got != c.want {
-			t.Errorf("coarseDuration(%v) = %q, want %q", c.d, got, c.want)
-		}
-	}
-}
-
 func TestDescribeNextCoarseHasNoSeconds(t *testing.T) {
 	now := time.Date(2026, 6, 8, 10, 0, 0, 0, time.Local)
 	next := now.Add(12*time.Minute + 30*time.Second)

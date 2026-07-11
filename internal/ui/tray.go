@@ -9,6 +9,7 @@ import (
 
 	"easy-alarms/internal/alarm"
 	"easy-alarms/internal/autostart"
+	"easy-alarms/internal/humanize"
 )
 
 // setupTray installs the StatusNotifierItem icon. Note GNOME's appindicator
@@ -32,7 +33,7 @@ func (u *UI) setupTray() {
 	quick := fyne.NewMenuItem("⏱ Timer rápido", nil)
 	var quickItems []*fyne.MenuItem
 	for _, d := range []time.Duration{5 * time.Minute, 10 * time.Minute, 25 * time.Minute, time.Hour} {
-		quickItems = append(quickItems, fyne.NewMenuItem(compactDuration(d), func() {
+		quickItems = append(quickItems, fyne.NewMenuItem(humanize.Compact(d), func() {
 			fyne.Do(func() { u.startQuickTimer(d) })
 		}))
 	}

@@ -105,6 +105,14 @@ func (s *Scheduler) ClearSnooze(id string) {
 	delete(s.snoozes, id)
 }
 
+// Snoozed reports whether the alarm currently has a pending snooze override.
+func (s *Scheduler) Snoozed(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.snoozes[id]
+	return ok
+}
+
 // NextFor returns the currently scheduled trigger for the alarm, which may
 // differ from Alarm.NextTrigger while snoozed.
 func (s *Scheduler) NextFor(a *Alarm) time.Time {

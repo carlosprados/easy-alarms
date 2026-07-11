@@ -30,6 +30,8 @@ focus: **the list tells you exactly when each alarm will ring.**
 - **System-tray** icon; closing the window minimises to the tray.
 - **Autostart on login** — toggle it from the tray menu.
 - Survives system suspend: a missed alarm rings right after resume.
+- **`alarmctl` CLI + MCP server**: control the running app from the terminal or
+  from a local AI. See [Controlling from the CLI (alarmctl)](#controlling-from-the-cli-alarmctl).
 
 ## Requirements
 
@@ -53,7 +55,8 @@ task uninstall      # remove everything task install added
 
 | Artifact | Destination |
 |----------|-------------|
-| Binary | `~/.local/bin/easy-alarms` |
+| GUI binary | `~/.local/bin/easy-alarms` |
+| CLI binary | `~/.local/bin/alarmctl` |
 | Icon (SVG + PNG 48/64/128/256) | `~/.local/share/icons/hicolor/.../apps/` |
 | App menu entry | `~/.local/share/applications/easy-alarms.desktop` |
 
@@ -86,18 +89,76 @@ for f in *.wav *.flac; do
 done
 ```
 
+## Controlling from the CLI (alarmctl)
+
+`alarmctl` is a second binary that drives a **running** easy-alarms app over a
+local Unix socket (`$XDG_RUNTIME_DIR/easy-alarms/control.sock`, `0600`). It does
+not launch the app; if the app isn't running, commands fail with a clear
+message (exit code 2).
+
+The command tree is fully self-documenting — `alarmctl <cmd> --help` shows flags
+and examples for every command:
+
+```bash
+alarmctl status                                     # next alarm, anything ringing
+alarmctl list [--kind clock|timer]                  # list everything
+
+alarmctl alarm create --at 07:30 --days weekdays --label "Work"
+alarmctl alarm create --at 09:00 --days lun,mié,vie # ES or EN day names
+alarmctl alarm edit  <id> --at 08:00 --days weekend
+alarmctl alarm enable|disable|delete <id>
+
+alarmctl timer create --duration 25m --label Pomodoro
+alarmctl timer create --duration 1h30m --paused
+alarmctl timer start|pause|resume|stop <id>
+
+alarmctl snooze [<id>] --for 10m                    # id optional if one is ringing
+alarmctl dismiss [<id>]                             # no id = dismiss all ringing
+```
+
+`--days` accepts `daily` / `weekdays` / `weekend`, or a comma list of day names
+in English (`mon,tue,…`) or Spanish (`lun,mar,mié,…`); omit it for a one-shot.
+Add `--json` to any command for machine-readable output.
+
+**Exit codes:** `0` success · `1` invalid input or conflict · `2` app not
+running · `3` alarm not found.
+
+### MCP server (for local AIs)
+
+`alarmctl mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+server on stdio, exposing tools (`create_alarm`, `create_timer`, `list_alarms`,
+`timer_control`, `snooze`, `dismiss`, …), a resource (`alarms://all`) and prompts
+(`wake-me-up`, `pomodoro`). Register it with Claude Code:
+
+```bash
+claude mcp add easy-alarms -- alarmctl mcp
+```
+
+Then just ask, e.g. *"ponme una alarma mañana a las 8 entre semana"* — the model
+calls `create_alarm` and confirms the next ring time. The GUI app must be
+running for the tools to take effect.
+
 ## Configuration
 
 Alarms are stored as JSON at `~/.config/easy-alarms/alarms.json`. An empty or
 corrupt file is tolerated — the app starts fresh and moves a bad file aside as
 `alarms.json.corrupt` rather than refusing to launch.
 
+The GUI accepts `--hidden` (start minimised to the tray), `--no-tray`
+(diagnostic) and `--no-control` (disable the `alarmctl` control socket).
+
 ## Project layout
 
 | Path | Responsibility |
 |------|----------------|
+| `cmd/easy-alarms` | GUI app entry point + control-server wiring |
+| `cmd/alarmctl` | `alarmctl` CLI entry point |
 | `internal/alarm` | Alarm model and the poll-based scheduler |
 | `internal/store` | JSON persistence |
 | `internal/audio` | Audio playback and the built-in beep |
 | `internal/autostart` | XDG autostart `.desktop` entry |
 | `internal/ui` | Fyne window, dialogs, tray and rendering |
+| `internal/control` | IPC boundary: Unix-socket server, client, DTOs, parsing |
+| `internal/cli` | Cobra command tree for `alarmctl` |
+| `internal/mcpserver` | MCP server (tools, resource, prompts) |
+| `internal/humanize` | Language-neutral duration formatting |
