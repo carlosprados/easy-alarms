@@ -63,6 +63,10 @@ func (u *UI) Ring(a *alarm.Alarm) {
 		content := container.NewVBox(big, msg, snoozes)
 
 		d = dialog.NewCustom("¡Alarma!", "🔕 Parar", content, u.win)
+		// Known edge case: if the same alarm rings again while its previous
+		// dialog is still open (snooze shorter than the ring), this overwrites
+		// the registry entry and a programmatic dismiss only closes the newest
+		// dialog; the OnClosed guard below keeps the bookkeeping correct.
 		u.ringing[a.ID] = d
 		// Every way out of the dialog (Parar, a snooze button, Esc, or a
 		// programmatic dismiss) lands here, so the sound bookkeeping cannot be

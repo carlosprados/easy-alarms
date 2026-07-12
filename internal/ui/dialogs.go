@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -15,10 +14,12 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"easy-alarms/internal/alarm"
+	"easy-alarms/internal/control"
+	"easy-alarms/internal/humanize"
+	"easy-alarms/internal/store"
 )
 
 var (
-	timePattern = regexp.MustCompile(`^([01]?\d|2[0-3]):([0-5]\d)$`)
 	audioFilter = storage.NewExtensionFileFilter([]string{".mp3", ".wav", ".ogg", ".oga", ".flac"})
 	// Display order Monday-first, mapped to time.Weekday indices.
 	dayOrder = [7]struct {
@@ -73,8 +74,16 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 			soundLabel.SetText(soundName(sound))
 			u.player.Stop()
 			idle()
+			u.rememberSoundDir(filepath.Dir(sound))
 		}, u.win)
 		fd.SetFilter(audioFilter)
+		// Open where the user picked a sound last time (e.g. ~/Music) instead
+		// of making them navigate from $HOME on every edit.
+		if dir := u.settings.LastSoundDir; dir != "" {
+			if lister, err := storage.ListerForURI(storage.NewFileURI(dir)); err == nil {
+				fd.SetLocation(lister)
+			}
+		}
 		fd.Show()
 	})
 	clear := widget.NewButton("Tono", func() {
@@ -102,7 +111,7 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 		timeEntry = widget.NewEntry()
 		timeEntry.SetText(fmt.Sprintf("%02d:%02d", a.Hour, a.Minute))
 		timeEntry.Validator = func(s string) error {
-			if !timePattern.MatchString(s) {
+			if _, _, err := control.ParseClockTime(s); err != nil {
 				return errors.New("formato HH:MM")
 			}
 			return nil
@@ -122,13 +131,14 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 		durEntry = widget.NewEntry()
 		durEntry.PlaceHolder = "10m, 1h30m..."
 		durEntry.Validator = func(s string) error {
-			if d, err := time.ParseDuration(s); err != nil || d <= 0 {
+			if _, err := control.ParseTimerDuration(s); err != nil {
 				return errors.New("ej: 10m, 1h30m")
 			}
 			return nil
 		}
 		if a.Duration > 0 {
-			durEntry.SetText(a.Duration.String())
+			// Compact form: "1h30m", not Go's noisy "1h30m0s".
+			durEntry.SetText(humanize.Compact(a.Duration))
 		}
 		items = append(items, widget.NewFormItem("Duración", durEntry))
 	}
@@ -171,20 +181,23 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 	d.Show()
 }
 
+// applyEdit validates and applies the dialog fields. Parsing is delegated to
+// internal/control — the same rules the alarmctl API enforces — with the error
+// messages kept in Spanish for the GUI.
 func applyEdit(a *alarm.Alarm, label, sound string, timeEntry, durEntry *widget.Entry, dayChecks [7]*widget.Check) error {
 	switch a.Kind {
 	case alarm.KindClock:
-		m := timePattern.FindStringSubmatch(timeEntry.Text)
-		if m == nil {
+		hour, minute, err := control.ParseClockTime(timeEntry.Text)
+		if err != nil {
 			return errors.New("hora inválida, formato HH:MM")
 		}
-		fmt.Sscanf(timeEntry.Text, "%d:%d", &a.Hour, &a.Minute)
+		a.Hour, a.Minute = hour, minute
 		for i, d := range dayOrder {
 			a.Repeat[d.wd] = dayChecks[i].Checked
 		}
 	case alarm.KindTimer:
-		d, err := time.ParseDuration(durEntry.Text)
-		if err != nil || d <= 0 {
+		d, err := control.ParseTimerDuration(durEntry.Text)
+		if err != nil {
 			return errors.New("duración inválida, ej: 10m, 1h30m")
 		}
 		a.Duration = d
@@ -192,6 +205,16 @@ func applyEdit(a *alarm.Alarm, label, sound string, timeEntry, durEntry *widget.
 	a.Label = label
 	a.Sound = sound
 	return nil
+}
+
+// rememberSoundDir persists the directory of the last picked sound so the next
+// file dialog opens there. Best-effort: a save failure is not worth a dialog.
+func (u *UI) rememberSoundDir(dir string) {
+	if dir == "" || dir == u.settings.LastSoundDir {
+		return
+	}
+	u.settings.LastSoundDir = dir
+	_ = store.SaveSettings(u.settings)
 }
 
 func soundName(path string) string {

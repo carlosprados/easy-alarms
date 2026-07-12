@@ -13,17 +13,17 @@ const (
 )
 
 type Alarm struct {
-	ID       string
-	Label    string
-	Kind     Kind
-	Hour     int           // clock: 0-23
-	Minute   int           // clock: 0-59
-	Repeat   [7]bool       // clock: indexed by time.Weekday (0 = Sunday)
+	ID        string
+	Label     string
+	Kind      Kind
+	Hour      int           // clock: 0-23
+	Minute    int           // clock: 0-59
+	Repeat    [7]bool       // clock: indexed by time.Weekday (0 = Sunday)
 	Duration  time.Duration // timer: configured length
 	FiresAt   time.Time     // timer: zero when not running
 	Remaining time.Duration // timer: time left while paused, zero otherwise
-	Sound    string        // audio file path; empty = built-in tone
-	Enabled  bool
+	Sound     string        // audio file path; empty = built-in tone
+	Enabled   bool
 }
 
 func New(kind Kind) *Alarm {

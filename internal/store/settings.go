@@ -9,9 +9,10 @@ import (
 // Settings holds user preferences, persisted separately from the alarms so a
 // schema change here never risks the alarm data.
 type Settings struct {
-	Lat         float64 `json:"lat"`
-	Lon         float64 `json:"lon"`
-	ShowSeconds bool    `json:"show_seconds"`
+	Lat          float64 `json:"lat"`
+	Lon          float64 `json:"lon"`
+	ShowSeconds  bool    `json:"show_seconds"`
+	LastSoundDir string  `json:"last_sound_dir,omitempty"` // where the sound picker opens
 }
 
 func settingsPath() (string, error) {

@@ -217,13 +217,14 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 	when := rowText(whenText, theme.TextSize(), false, fg)
 	u.rows = append(u.rows, &row{alarm: a, when: when, last: whenText})
 
+	// The sound is deliberately not shown here: it's secondary info that made
+	// every row taller, and the edit dialog already displays it.
 	left := container.NewVBox(title, when)
 	if a.Kind == alarm.KindClock {
 		if rep := repeatLabel(a.Repeat); rep != "" {
 			left.Add(rowText("📅  "+rep, theme.TextSize(), false, fg))
 		}
 	}
-	left.Add(rowText("🎵  "+soundName(a.Sound), theme.TextSize(), false, fg))
 
 	dup := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
 		c := alarm.New(a.Kind)

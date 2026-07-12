@@ -153,10 +153,10 @@ func fallbackTone() beep.Streamer {
 // on for `on` samples then silent for `off` samples, repeating. Much less
 // grating than a continuous tone for the built-in alarm sound.
 type beepingTone struct {
-	freq     float64
-	on, off  int
-	pos      int     // position within the current on+off cycle
-	phase    float64 // sine phase in radians, reset between beeps to avoid clicks
+	freq    float64
+	on, off int
+	pos     int     // position within the current on+off cycle
+	phase   float64 // sine phase in radians, reset between beeps to avoid clicks
 }
 
 func (b *beepingTone) Stream(samples [][2]float64) (int, bool) {
