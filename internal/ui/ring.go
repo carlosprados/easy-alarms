@@ -32,7 +32,11 @@ func (u *UI) Ring(a *alarm.Alarm) {
 		u.ringDialogs++
 
 		title := rowTitle(a)
-		u.app.SendNotification(fyne.NewNotification("Easy Alarms", title))
+		body := title
+		if a.Note != "" {
+			body += "\n" + a.Note
+		}
+		u.app.SendNotification(fyne.NewNotification("Easy Alarms", body))
 
 		// Settle post-fire state before rescheduling: one-shots disarm,
 		// repeating clocks pick up their next occurrence naturally.
@@ -60,7 +64,16 @@ func (u *UI) Ring(a *alarm.Alarm) {
 				d.Hide()
 			}))
 		}
-		content := container.NewVBox(big, msg, snoozes)
+		content := container.NewVBox(big, msg)
+		if a.Note != "" {
+			note := widget.NewLabel(a.Note)
+			note.Wrapping = fyne.TextWrapWord
+			copyNote := widget.NewButtonWithIcon("Copiar nota", theme.ContentCopyIcon(), func() {
+				u.app.Clipboard().SetContent(a.Note)
+			})
+			content.Add(widget.NewCard("", "", container.NewVBox(note, copyNote)))
+		}
+		content.Add(snoozes)
 
 		d = dialog.NewCustom("¡Alarma!", "🔕 Parar", content, u.win)
 		// Known edge case: if the same alarm rings again while its previous

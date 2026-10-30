@@ -58,7 +58,14 @@ func alarmLine(d control.AlarmDTO) string {
 		if d.Enabled {
 			enabled = "on "
 		}
-		fmt.Fprintf(&b, "⏰  %-24s %s  [%-8s] %s", label, d.Time, daysHuman(d.Days), enabled)
+		when := daysHuman(d.Days)
+		if d.Date != "" {
+			when = d.Date
+		}
+		fmt.Fprintf(&b, "⏰  %-24s %s  [%-10s] %s", label, d.Time, when, enabled)
+		if d.SkipUntil != "" {
+			fmt.Fprintf(&b, "  ⏭ skipped through %s", d.SkipUntil)
+		}
 	}
 	switch {
 	case d.Ringing:
@@ -69,6 +76,9 @@ func alarmLine(d control.AlarmDTO) string {
 		fmt.Fprintf(&b, "  → in %s", d.NextIn)
 	}
 	fmt.Fprintf(&b, "   #%s", d.ID)
+	if d.Note != "" {
+		fmt.Fprintf(&b, "\n      📝 %s", strings.ReplaceAll(d.Note, "\n", "\n         "))
+	}
 	return b.String()
 }
 

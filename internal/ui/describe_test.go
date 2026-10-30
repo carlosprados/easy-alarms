@@ -3,6 +3,8 @@ package ui
 import (
 	"testing"
 	"time"
+
+	"easy-alarms/internal/alarm"
 )
 
 func TestDescribeNextCoarseHasNoSeconds(t *testing.T) {
@@ -55,5 +57,25 @@ func TestDayLabel(t *testing.T) {
 	}
 	if got := dayLabel(now.AddDate(0, 0, 3), now); got != "el jueves" {
 		t.Errorf("three days = %q, want el jueves", got)
+	}
+}
+
+func TestScheduleLabel(t *testing.T) {
+	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.Local) // Friday
+	weekdays := [7]bool{false, true, true, true, true, true, false}
+
+	dated := &alarm.Alarm{Kind: alarm.KindClock, Hour: 7, Date: "2026-11-02"}
+	if got, want := scheduleLabel(dated, now), "Solo el lunes 2 de noviembre"; got != want {
+		t.Errorf("dated: %q, want %q", got, want)
+	}
+
+	one := &alarm.Alarm{Kind: alarm.KindClock, Hour: 7, Repeat: weekdays, Enabled: true, SkipUntil: "2026-11-02"}
+	if got, want := scheduleLabel(one, now), "Días laborables (L–V) · ⏭ no suena el lunes 2 de noviembre"; got != want {
+		t.Errorf("single skip: %q, want %q", got, want)
+	}
+
+	vacation := &alarm.Alarm{Kind: alarm.KindClock, Hour: 7, Repeat: weekdays, Enabled: true, SkipUntil: "2026-11-10"}
+	if got, want := scheduleLabel(vacation, now), "Días laborables (L–V) · ⏭ en pausa hasta el martes 10 de noviembre incluido"; got != want {
+		t.Errorf("vacation: %q, want %q", got, want)
 	}
 }

@@ -14,7 +14,15 @@ focus: **the list tells you exactly when each alarm will ring.**
 
 ## Features
 
-- **Clock alarms** (HH:MM) with optional per-weekday repeat (L M X J V S D).
+- **Clock alarms** (HH:MM) with optional per-weekday repeat (L M X J V S D),
+  or **on a specific date**: a dated alarm rings once that day and disarms
+  (calendar picker in the editor).
+- **Skip the next occurrence** of a repeating alarm (holidays) with the ⏭
+  button on its row, without disabling it; tap again to undo. From the CLI/MCP
+  you can also skip through a date (vacations).
+- **Notes**: keep the label short and put context, commands or links in the
+  note. It shows in the ringing dialog (with a *copy* button) and in the
+  notification; rows with a note carry a 📝.
 - **Countdown timers** (`10m`, `1h30m`, `45s`) with **pause/resume**.
 - **Quick timers from the tray**: 5m / 10m / 25m / 1h, one click, no dialog.
 - Every row shows **when it next rings** and the countdown, updated live.
@@ -105,7 +113,12 @@ alarmctl list [--kind clock|timer]                  # list everything
 
 alarmctl alarm create --at 07:30 --days weekdays --label "Work"
 alarmctl alarm create --at 09:00 --days lun,mié,vie # ES or EN day names
+alarmctl alarm create --at 07:00 --date 2026-11-02 --label "Fin de guardia" \
+    --note "./scripts/guardia off (repo ansible)"   # rings once that day
 alarmctl alarm edit  <id> --at 08:00 --days weekend
+alarmctl alarm edit  <id> --note ""                 # empty value clears
+alarmctl alarm skip  <id> [--until 2026-11-10]      # next occurrence, or through a date
+alarmctl alarm unskip <id>
 alarmctl alarm enable|disable|delete <id>
 
 alarmctl timer create --duration 25m --label Pomodoro
@@ -118,6 +131,9 @@ alarmctl dismiss [<id>]                             # no id = dismiss all ringin
 
 `--days` accepts `daily` / `weekdays` / `weekend`, or a comma list of day names
 in English (`mon,tue,…`) or Spanish (`lun,mar,mié,…`); omit it for a one-shot.
+`--date` takes `YYYY-MM-DD`, `today`/`hoy` or `tomorrow`/`mañana`; it excludes
+`--days`, and a date and time already in the past is rejected rather than
+creating an alarm that would never ring.
 Add `--json` to any command for machine-readable output.
 
 **Exit codes:** `0` success · `1` invalid input or conflict · `2` app not
@@ -127,15 +143,18 @@ running · `3` alarm not found.
 
 `alarmctl mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
 server on stdio, exposing tools (`create_alarm`, `create_timer`, `list_alarms`,
-`timer_control`, `snooze`, `dismiss`, …), a resource (`alarms://all`) and prompts
+`update_alarm`, `skip_alarm`, `timer_control`, `snooze`, `dismiss`, …), a resource (`alarms://all`) and prompts
 (`wake-me-up`, `pomodoro`). Register it with Claude Code:
 
 ```bash
 claude mcp add easy-alarms -- alarmctl mcp
 ```
 
-Then just ask, e.g. *"ponme una alarma mañana a las 8 entre semana"* — the model
-calls `create_alarm` and confirms the next ring time. The GUI app must be
+Then just ask, e.g. *"ponme una alarma mañana a las 8 entre semana"*, *"el 2 de
+noviembre a las 7 recuérdame quitar la guardia, el comando es …"* (a dated alarm
+with the command in its note) or *"el lunes es festivo, sáltate las alarmas de
+diario"* — the model calls the matching tool and confirms the next ring time.
+Every alarm it reads back carries `date`, `note` and `skip_until`. The GUI app must be
 running for the tools to take effect.
 
 ## Configuration

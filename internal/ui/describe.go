@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"easy-alarms/internal/alarm"
 	"easy-alarms/internal/humanize"
 )
 
@@ -50,9 +51,37 @@ func dayLabel(next, now time.Time) string {
 		return "hoy"
 	case sameDay(next, now.AddDate(0, 0, 1)):
 		return "mañana"
-	default:
+	case next.Sub(now) < 6*24*time.Hour:
 		return weekdayNames[next.Weekday()]
+	default:
+		// Beyond this week a bare weekday is ambiguous (dates, skips).
+		return weekdayNames[next.Weekday()] + " " + shortDate(next)
 	}
+}
+
+// shortDate renders "2 de noviembre".
+func shortDate(t time.Time) string {
+	return fmt.Sprintf("%d de %s", t.Day(), longMonths[t.Month()-1])
+}
+
+// scheduleLabel is a clock alarm's schedule line: its date or repeat days,
+// plus any pending skip. "" for a plain one-shot.
+func scheduleLabel(a *alarm.Alarm, now time.Time) string {
+	if d, ok := alarm.ParseDate(a.Date, now.Location()); ok {
+		return "Solo " + weekdayNames[d.Weekday()] + " " + shortDate(d)
+	}
+	s := repeatLabel(a.Repeat)
+	if skip, ok := a.ActiveSkip(now); ok && a.Repeats() {
+		day := weekdayNames[skip.Weekday()] + " " + shortDate(skip)
+		unskipped := *a
+		unskipped.SkipUntil = ""
+		if sameDay(unskipped.NextTrigger(now), skip) {
+			s += " · ⏭ no suena " + day
+		} else {
+			s += " · ⏭ en pausa hasta " + day + " incluido"
+		}
+	}
+	return s
 }
 
 // shortDays are Monday-first abbreviations, indexed by time.Weekday.

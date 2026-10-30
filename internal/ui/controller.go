@@ -70,7 +70,13 @@ func (c controller) CreateAlarm(spec control.ClockSpec) (st control.AlarmState, 
 		a.Hour = spec.Hour
 		a.Minute = spec.Minute
 		a.Repeat = spec.Repeat
+		a.Date = spec.Date
+		a.Note = spec.Note
 		a.Sound = spec.Sound
+		if a.Date != "" && a.NextTrigger(time.Now()).IsZero() {
+			err = control.ErrNeverRings
+			return
+		}
 		c.u.store.Add(a)
 		c.u.commit()
 		st = c.u.snapshotOne(a)
@@ -83,6 +89,7 @@ func (c controller) CreateTimer(spec control.TimerSpec) (st control.AlarmState, 
 		a := alarm.New(alarm.KindTimer)
 		a.Label = spec.Label
 		a.Duration = spec.Duration
+		a.Note = spec.Note
 		a.Sound = spec.Sound
 		if spec.Start {
 			a.FiresAt = time.Now().Add(spec.Duration)
@@ -101,7 +108,7 @@ func (c controller) Update(id string, p control.Patch) (st control.AlarmState, e
 			err = control.ErrNotFound
 			return
 		}
-		clockFields := p.Hour != nil || p.Minute != nil || p.Repeat != nil
+		clockFields := p.Hour != nil || p.Minute != nil || p.Repeat != nil || p.Date != nil
 		if clockFields && a.Kind != alarm.KindClock {
 			err = control.ErrWrongKind
 			return
@@ -110,28 +117,48 @@ func (c controller) Update(id string, p control.Patch) (st control.AlarmState, e
 			err = control.ErrWrongKind
 			return
 		}
+		// Work on a copy so a rejected patch leaves the alarm untouched.
+		n := *a
 		if p.Label != nil {
-			a.Label = *p.Label
+			n.Label = *p.Label
+		}
+		if p.Note != nil {
+			n.Note = *p.Note
 		}
 		if p.Sound != nil {
-			a.Sound = *p.Sound
+			n.Sound = *p.Sound
 		}
 		if p.Hour != nil {
-			a.Hour = *p.Hour
+			n.Hour = *p.Hour
 		}
 		if p.Minute != nil {
-			a.Minute = *p.Minute
+			n.Minute = *p.Minute
 		}
 		if p.Repeat != nil {
-			a.Repeat = *p.Repeat
-		}
-		if p.Duration != nil {
-			a.Duration = *p.Duration
-			// Changing a running timer's duration restarts its countdown.
-			if !a.FiresAt.IsZero() {
-				a.FiresAt = time.Now().Add(*p.Duration)
+			n.Repeat = *p.Repeat
+			if n.Repeats() {
+				n.Date = "" // repeating replaces a one-off date
 			}
 		}
+		if p.Date != nil {
+			n.Date = *p.Date
+			if n.Date != "" {
+				n.Repeat, n.SkipUntil = [7]bool{}, ""
+				n.Enabled = true // re-dating a fired one-off re-arms it
+			}
+		}
+		if n.Kind == alarm.KindClock && n.Date != "" && n.Enabled && n.NextTrigger(time.Now()).IsZero() {
+			err = control.ErrNeverRings
+			return
+		}
+		if p.Duration != nil {
+			n.Duration = *p.Duration
+			// Changing a running timer's duration restarts its countdown.
+			if !n.FiresAt.IsZero() {
+				n.FiresAt = time.Now().Add(*p.Duration)
+			}
+		}
+		*a = n
 		// A pending snooze belongs to the pre-edit schedule; drop it (mirrors
 		// the GUI editor).
 		c.u.sched.ClearSnooze(id)
@@ -227,6 +254,51 @@ func (c controller) TimerOp(id string, op control.TimerOp) (st control.AlarmStat
 			return
 		}
 		c.u.commit()
+		st = c.u.snapshotOne(a)
+	})
+	return
+}
+
+func (c controller) Skip(id, until string) (st control.AlarmState, err error) {
+	fyne.DoAndWait(func() {
+		a := c.u.findByID(id)
+		if a == nil {
+			err = control.ErrNotFound
+			return
+		}
+		if !a.Skippable() {
+			err = control.ErrNoRepeat
+			return
+		}
+		if until == "" {
+			if _, ok := a.SkipNext(time.Now()); !ok {
+				err = control.ErrBadState // disabled: nothing upcoming to skip
+				return
+			}
+		} else {
+			a.SkipUntil = until
+		}
+		c.u.commit()
+		st = c.u.snapshotOne(a)
+	})
+	return
+}
+
+func (c controller) ClearSkip(id string) (st control.AlarmState, err error) {
+	fyne.DoAndWait(func() {
+		a := c.u.findByID(id)
+		if a == nil {
+			err = control.ErrNotFound
+			return
+		}
+		if a.Kind != alarm.KindClock {
+			err = control.ErrWrongKind
+			return
+		}
+		if a.SkipUntil != "" {
+			a.SkipUntil = ""
+			c.u.commit()
+		}
 		st = c.u.snapshotOne(a)
 	})
 	return

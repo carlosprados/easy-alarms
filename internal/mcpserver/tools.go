@@ -27,7 +27,7 @@ func (h *handlers) registerTools(s *mcp.Server) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_alarm",
-		Description: "Create a clock alarm that rings at a time of day. It is enabled immediately. Use days for repetition; omit it for a one-shot alarm that rings the next time the given time comes around.",
+		Description: "Create a clock alarm that rings at a time of day. It is enabled immediately. Three shapes: days for a repeating alarm; date for a one-off on a specific calendar day (it rings once and then disarms; a date+time in the past is rejected); neither for a one-shot that rings the next time the given time comes around. Put context, instructions or commands in note, not in the label: the label is the short title shown in the list.",
 	}, h.createAlarm)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -37,7 +37,7 @@ func (h *handlers) registerTools(s *mcp.Server) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_alarm",
-		Description: "Change fields of an existing alarm or timer by ID. Only the fields you provide are modified.",
+		Description: "Change fields of an existing alarm or timer by ID. Only the fields you provide are modified. Setting date turns the alarm into a one-off on that day (clears days and re-arms it); setting days clears the date. Use clear_date / clear_note to remove those fields.",
 	}, h.updateAlarm)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -50,6 +50,10 @@ func (h *handlers) registerTools(s *mcp.Server) {
 		Description: "Enable or disable a clock alarm by ID. (Timers use timer_control instead.)",
 	}, h.setEnabled)
 
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "skip_alarm",
+		Description: "Silence a repeating clock alarm without disabling it: by default only its next occurrence is skipped (e.g. a holiday); with until, every occurrence up to and including that date (e.g. a vacation). It resumes on its own afterwards. Calling it again without until skips the following occurrence too. cancel=true removes the skip. The result's next_trigger shows when it will really ring.",
+	}, h.skipAlarm)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "timer_control",
 		Description: "Control a timer's lifecycle by ID: start an idle timer, pause a running one, resume a paused one, or stop it back to idle.",
@@ -76,25 +80,38 @@ type listIn struct {
 
 type createAlarmIn struct {
 	At    string `json:"at" jsonschema:"time of day in 24h HH:MM format, e.g. 07:30"`
-	Days  string `json:"days,omitempty" jsonschema:"repetition: daily, weekdays, weekend, or a comma list of day names in English or Spanish (mon,tue / lun,mar); empty for a one-shot"`
-	Label string `json:"label,omitempty" jsonschema:"optional human label"`
+	Days  string `json:"days,omitempty" jsonschema:"repetition: daily, weekdays, weekend, or a comma list of day names in English or Spanish (mon,tue / lun,mar); empty for a one-shot. Not allowed together with date"`
+	Date  string `json:"date,omitempty" jsonschema:"calendar day for a one-off alarm: YYYY-MM-DD, today or tomorrow. Not allowed together with days"`
+	Label string `json:"label,omitempty" jsonschema:"short title shown in the list"`
+	Note  string `json:"note,omitempty" jsonschema:"optional longer context: what to do when it rings, commands, links. Shown in the editor and the ring dialog"`
 	Sound string `json:"sound,omitempty" jsonschema:"optional path to a sound file; empty uses the built-in tone"`
 }
 
 type createTimerIn struct {
 	Duration string `json:"duration" jsonschema:"countdown length as a Go duration, e.g. 10m, 1h30m, 90s"`
 	Label    string `json:"label,omitempty" jsonschema:"optional human label"`
+	Note     string `json:"note,omitempty" jsonschema:"optional longer context shown when it rings"`
 	Sound    string `json:"sound,omitempty" jsonschema:"optional path to a sound file; empty uses the built-in tone"`
 	Start    *bool  `json:"start,omitempty" jsonschema:"whether to start the timer immediately; defaults to true"`
 }
 
 type updateAlarmIn struct {
-	ID       string `json:"id" jsonschema:"the alarm or timer ID"`
-	At       string `json:"at,omitempty" jsonschema:"new time HH:MM (clock alarms only)"`
-	Days     string `json:"days,omitempty" jsonschema:"new repetition (clock alarms only)"`
-	Duration string `json:"duration,omitempty" jsonschema:"new duration, e.g. 25m (timers only); restarts a running timer"`
-	Label    string `json:"label,omitempty" jsonschema:"new label"`
-	Sound    string `json:"sound,omitempty" jsonschema:"new sound file path; empty uses the built-in tone"`
+	ID        string `json:"id" jsonschema:"the alarm or timer ID"`
+	At        string `json:"at,omitempty" jsonschema:"new time HH:MM (clock alarms only)"`
+	Days      string `json:"days,omitempty" jsonschema:"new repetition (clock alarms only); clears any date"`
+	Date      string `json:"date,omitempty" jsonschema:"new one-off day YYYY-MM-DD, today or tomorrow (clock alarms only); clears days"`
+	Note      string `json:"note,omitempty" jsonschema:"new note"`
+	ClearDate bool   `json:"clear_date,omitempty" jsonschema:"true to remove the date (the alarm becomes a plain one-shot)"`
+	ClearNote bool   `json:"clear_note,omitempty" jsonschema:"true to remove the note"`
+	Duration  string `json:"duration,omitempty" jsonschema:"new duration, e.g. 25m (timers only); restarts a running timer"`
+	Label     string `json:"label,omitempty" jsonschema:"new label"`
+	Sound     string `json:"sound,omitempty" jsonschema:"new sound file path; empty uses the built-in tone"`
+}
+
+type skipIn struct {
+	ID     string `json:"id" jsonschema:"the repeating clock alarm ID"`
+	Until  string `json:"until,omitempty" jsonschema:"skip every occurrence up to and including this day: YYYY-MM-DD, today or tomorrow. Omit to skip only the next occurrence"`
+	Cancel bool   `json:"cancel,omitempty" jsonschema:"true to remove a pending skip instead"`
 }
 
 type idIn struct {
@@ -135,12 +152,16 @@ func (h *handlers) listAlarms(_ context.Context, _ *mcp.CallToolRequest, in list
 }
 
 func (h *handlers) createAlarm(_ context.Context, _ *mcp.CallToolRequest, in createAlarmIn) (*mcp.CallToolResult, control.AlarmDTO, error) {
-	d, err := h.client.CreateAlarm(control.CreateAlarmRequest{At: in.At, Days: in.Days, Label: in.Label, Sound: in.Sound})
+	d, err := h.client.CreateAlarm(control.CreateAlarmRequest{
+		At: in.At, Days: in.Days, Date: in.Date, Label: in.Label, Note: in.Note, Sound: in.Sound,
+	})
 	return nil, d, err
 }
 
 func (h *handlers) createTimer(_ context.Context, _ *mcp.CallToolRequest, in createTimerIn) (*mcp.CallToolResult, control.AlarmDTO, error) {
-	d, err := h.client.CreateTimer(control.CreateTimerRequest{Duration: in.Duration, Label: in.Label, Sound: in.Sound, Start: in.Start})
+	d, err := h.client.CreateTimer(control.CreateTimerRequest{
+		Duration: in.Duration, Label: in.Label, Note: in.Note, Sound: in.Sound, Start: in.Start,
+	})
 	return nil, d, err
 }
 
@@ -154,6 +175,20 @@ func (h *handlers) updateAlarm(_ context.Context, _ *mcp.CallToolRequest, in upd
 	}
 	if in.Duration != "" {
 		req.Duration = &in.Duration
+	}
+	if in.Date != "" {
+		req.Date = &in.Date
+	}
+	if in.ClearDate {
+		empty := ""
+		req.Date = &empty
+	}
+	if in.Note != "" {
+		req.Note = &in.Note
+	}
+	if in.ClearNote {
+		empty := ""
+		req.Note = &empty
 	}
 	if in.Label != "" {
 		req.Label = &in.Label
@@ -174,6 +209,15 @@ func (h *handlers) deleteAlarm(_ context.Context, _ *mcp.CallToolRequest, in idI
 
 func (h *handlers) setEnabled(_ context.Context, _ *mcp.CallToolRequest, in setEnabledIn) (*mcp.CallToolResult, control.AlarmDTO, error) {
 	d, err := h.client.SetEnabled(in.ID, in.Enabled)
+	return nil, d, err
+}
+
+func (h *handlers) skipAlarm(_ context.Context, _ *mcp.CallToolRequest, in skipIn) (*mcp.CallToolResult, control.AlarmDTO, error) {
+	if in.Cancel {
+		d, err := h.client.ClearSkip(in.ID)
+		return nil, d, err
+	}
+	d, err := h.client.Skip(in.ID, in.Until)
 	return nil, d, err
 }
 

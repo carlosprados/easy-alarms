@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"easy-alarms/internal/alarm"
 )
 
 // timePattern mirrors the GUI's clock-time validation (internal/ui/dialogs.go).
@@ -103,4 +105,21 @@ func DaysToStrings(r [7]bool) []string {
 		}
 	}
 	return out
+}
+
+// ParseDate parses a calendar date for the wire: "YYYY-MM-DD", or the
+// keywords today/hoy and tomorrow/mañana relative to now. It returns the
+// canonical "YYYY-MM-DD" form.
+func ParseDate(s string, now time.Time) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "today", "hoy":
+		return now.Format(alarm.DateLayout), nil
+	case "tomorrow", "mañana", "manana":
+		return now.AddDate(0, 0, 1).Format(alarm.DateLayout), nil
+	}
+	d, ok := alarm.ParseDate(strings.TrimSpace(s), now.Location())
+	if !ok {
+		return "", fmt.Errorf("invalid date %q, expected YYYY-MM-DD, today or tomorrow", s)
+	}
+	return d.Format(alarm.DateLayout), nil
 }

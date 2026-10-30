@@ -101,3 +101,25 @@ func TestDaysRoundTrip(t *testing.T) {
 		t.Error("one-shot should produce nil days")
 	}
 }
+
+func TestParseDate(t *testing.T) {
+	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.Local)
+	cases := map[string]string{
+		"2026-11-02": "2026-11-02",
+		" today ":    "2026-10-30",
+		"hoy":        "2026-10-30",
+		"mañana":     "2026-10-31",
+		"tomorrow":   "2026-10-31",
+	}
+	for in, want := range cases {
+		got, err := ParseDate(in, now)
+		if err != nil || got != want {
+			t.Errorf("ParseDate(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "2-nov", "2026-13-01", "02/11/2026"} {
+		if _, err := ParseDate(bad, now); err == nil {
+			t.Errorf("ParseDate(%q) accepted", bad)
+		}
+	}
+}

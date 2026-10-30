@@ -159,6 +159,21 @@ func (c *Client) Snooze(id, forDur string) error {
 	return c.do(http.MethodPost, "/alarms/"+id+"/snooze", SnoozeRequest{For: forDur}, nil)
 }
 
+// Skip silences a repeating alarm through until (a date; "" = just the next
+// occurrence).
+func (c *Client) Skip(id, until string) (AlarmDTO, error) {
+	var d AlarmDTO
+	err := c.do(http.MethodPost, "/alarms/"+id+"/skip", SkipRequest{Until: until}, &d)
+	return d, err
+}
+
+// ClearSkip cancels a pending skip.
+func (c *Client) ClearSkip(id string) (AlarmDTO, error) {
+	var d AlarmDTO
+	err := c.do(http.MethodDelete, "/alarms/"+id+"/skip", nil, &d)
+	return d, err
+}
+
 // Dismiss stops a ringing alarm.
 func (c *Client) Dismiss(id string) error {
 	return c.do(http.MethodPost, "/alarms/"+id+"/dismiss", nil, nil)

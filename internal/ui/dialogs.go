@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -36,6 +37,12 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 	label := widget.NewEntry()
 	label.SetText(a.Label)
 	label.PlaceHolder = "Etiqueta (opcional)"
+
+	note := widget.NewMultiLineEntry()
+	note.SetText(a.Note)
+	note.PlaceHolder = "Contexto, comandos, enlaces... (opcional)"
+	note.Wrapping = fyne.TextWrapWord
+	note.SetMinRowsVisible(3)
 
 	sound := a.Sound
 	soundLabel := widget.NewLabel(soundName(sound))
@@ -103,6 +110,7 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 
 	var (
 		timeEntry *widget.Entry
+		dateEntry *widget.Entry
 		durEntry  *widget.Entry
 		dayChecks [7]*widget.Check
 	)
@@ -123,9 +131,25 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 			dayChecks[i] = c
 			days.Add(c)
 		}
+		dateEntry = u.newDateEntry(a.Date)
+		// A dated alarm rings once, so the repeat days make no sense with it.
+		syncDays := func(s string) {
+			date, err := parseUIDate(s)
+			for _, c := range dayChecks {
+				if err == nil && date != "" {
+					c.SetChecked(false)
+					c.Disable()
+				} else {
+					c.Enable()
+				}
+			}
+		}
+		dateEntry.OnChanged = syncDays
+		syncDays(dateEntry.Text)
 		items = append(items,
 			widget.NewFormItem("Hora (HH:MM)", timeEntry),
 			widget.NewFormItem("Repetir", days),
+			widget.NewFormItem("Fecha", dateEntry),
 		)
 	case alarm.KindTimer:
 		durEntry = widget.NewEntry()
@@ -142,7 +166,10 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 		}
 		items = append(items, widget.NewFormItem("Duración", durEntry))
 	}
-	items = append(items, widget.NewFormItem("🎵 Sonido", soundRow))
+	items = append(items,
+		widget.NewFormItem("🎵 Sonido", soundRow),
+		widget.NewFormItem("📝 Nota", note),
+	)
 
 	title := map[alarm.Kind]string{alarm.KindClock: "⏰ Alarma", alarm.KindTimer: "⏱ Timer"}[a.Kind]
 	d := dialog.NewForm(title, "Guardar", "Cancelar", items, func(ok bool) {
@@ -150,7 +177,10 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 		if !ok {
 			return
 		}
-		if err := applyEdit(a, label.Text, sound, timeEntry, durEntry, dayChecks); err != nil {
+		if err := applyEdit(a, editFields{
+			label: label.Text, note: note.Text, sound: sound,
+			time: timeEntry, date: dateEntry, dur: durEntry, days: dayChecks,
+		}); err != nil {
 			dialog.ShowError(err, u.win)
 			return
 		}
@@ -174,6 +204,7 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 	label.OnSubmitted = submit
 	if timeEntry != nil {
 		timeEntry.OnSubmitted = submit
+		dateEntry.OnSubmitted = submit
 	}
 	if durEntry != nil {
 		durEntry.OnSubmitted = submit
@@ -181,30 +212,108 @@ func (u *UI) showEditDialog(a *alarm.Alarm, isNew bool) {
 	d.Show()
 }
 
+type editFields struct {
+	label, note, sound string
+	time, date, dur    *widget.Entry
+	days               [7]*widget.Check
+}
+
 // applyEdit validates and applies the dialog fields. Parsing is delegated to
 // internal/control — the same rules the alarmctl API enforces — with the error
-// messages kept in Spanish for the GUI.
-func applyEdit(a *alarm.Alarm, label, sound string, timeEntry, durEntry *widget.Entry, dayChecks [7]*widget.Check) error {
-	switch a.Kind {
+// messages kept in Spanish for the GUI. The alarm is only touched when every
+// field is valid.
+func applyEdit(a *alarm.Alarm, f editFields) error {
+	n := *a
+	switch n.Kind {
 	case alarm.KindClock:
-		hour, minute, err := control.ParseClockTime(timeEntry.Text)
+		hour, minute, err := control.ParseClockTime(f.time.Text)
 		if err != nil {
 			return errors.New("hora inválida, formato HH:MM")
 		}
-		a.Hour, a.Minute = hour, minute
+		n.Hour, n.Minute = hour, minute
 		for i, d := range dayOrder {
-			a.Repeat[d.wd] = dayChecks[i].Checked
+			n.Repeat[d.wd] = f.days[i].Checked
+		}
+		if n.Date, err = parseUIDate(f.date.Text); err != nil {
+			return errors.New("fecha inválida, formato dd/mm/aaaa")
+		}
+		if n.Date != "" {
+			n.Repeat = [7]bool{}
+			armed := n
+			armed.Enabled = true
+			if armed.NextTrigger(time.Now()).IsZero() {
+				return errors.New("esa fecha y hora ya han pasado")
+			}
+		}
+		if !n.Skippable() {
+			n.SkipUntil = ""
 		}
 	case alarm.KindTimer:
-		d, err := control.ParseTimerDuration(durEntry.Text)
+		d, err := control.ParseTimerDuration(f.dur.Text)
 		if err != nil {
 			return errors.New("duración inválida, ej: 10m, 1h30m")
 		}
-		a.Duration = d
+		n.Duration = d
 	}
-	a.Label = label
-	a.Sound = sound
+	n.Label = f.label
+	n.Note = strings.TrimSpace(f.note)
+	n.Sound = f.sound
+	*a = n
 	return nil
+}
+
+// uiDateLayout is how dates are typed and shown in the editor.
+const uiDateLayout = "02/01/2006"
+
+// parseUIDate turns the editor's date field into alarm.DateLayout; empty
+// means no date.
+func parseUIDate(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	for _, layout := range []string{uiDateLayout, "2/1/2006", alarm.DateLayout} {
+		if d, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			return d.Format(alarm.DateLayout), nil
+		}
+	}
+	return "", errors.New("invalid date")
+}
+
+// newDateEntry is an optional dd/mm/aaaa field with a calendar picker.
+// Fyne's DateEntry is not used because its validator rejects an empty field.
+func (u *UI) newDateEntry(date string) *widget.Entry {
+	e := widget.NewEntry()
+	e.PlaceHolder = "dd/mm/aaaa — opcional, suena solo ese día"
+	e.Validator = func(s string) error {
+		if _, err := parseUIDate(s); err != nil {
+			return errors.New("formato dd/mm/aaaa")
+		}
+		return nil
+	}
+	var pop *widget.PopUp
+	var pick *widget.Button
+	pick = widget.NewButtonWithIcon("", theme.CalendarIcon(), func() {
+		start := time.Now()
+		if d, err := parseUIDate(e.Text); err == nil && d != "" {
+			start, _ = alarm.ParseDate(d, time.Local)
+		}
+		cal := widget.NewCalendar(start, func(t time.Time) {
+			e.SetText(t.Format(uiDateLayout))
+			pop.Hide()
+		})
+		pop = widget.NewPopUp(cal, u.win.Canvas())
+		// Right-align with the button so the popup opens inwards.
+		x := pick.Size().Width - pop.MinSize().Width
+		pop.ShowAtRelativePosition(fyne.NewPos(x, pick.Size().Height), pick)
+	})
+	pick.Importance = widget.LowImportance
+	// ActionItem must be set before SetText, which builds the renderer.
+	e.ActionItem = pick
+	if d, ok := alarm.ParseDate(date, time.Local); ok {
+		e.SetText(d.Format(uiDateLayout))
+	}
+	return e
 }
 
 // rememberSoundDir persists the directory of the last picked sound so the next

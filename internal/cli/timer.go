@@ -46,6 +46,7 @@ func (c *cli) newTimerCreateCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&req.Duration, "duration", "", "countdown length, e.g. 10m, 1h30m, 90s [required]")
 	f.StringVar(&req.Label, "label", "", "optional label")
+	f.StringVar(&req.Note, "note", "", "optional note shown when it rings")
 	f.StringVar(&req.Sound, "sound", "", "path to a sound file (empty = built-in tone)")
 	f.BoolVar(&paused, "paused", false, "create the timer without starting it")
 	cmd.MarkFlagRequired("duration")

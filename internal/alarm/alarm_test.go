@@ -93,3 +93,52 @@ func TestRepeats(t *testing.T) {
 		t.Error("alarm with a repeat day should repeat")
 	}
 }
+
+func TestNextTriggerDated(t *testing.T) {
+	a := clock(7, 0, [7]bool{})
+	a.Date = now.AddDate(0, 0, 20).Format(DateLayout)
+	if got, want := a.NextTrigger(now), at(now.AddDate(0, 0, 20), 7, 0); !got.Equal(want) {
+		t.Errorf("future date: got %v, want %v", got, want)
+	}
+	a.Date = now.Format(DateLayout) // 07:00 today is before now (10:00)
+	if got := a.NextTrigger(now); !got.IsZero() {
+		t.Errorf("past date: got %v, want zero", got)
+	}
+}
+
+func TestSkip(t *testing.T) {
+	daily := [7]bool{true, true, true, true, true, true, true}
+
+	a := clock(11, 0, daily)
+	first, ok := a.SkipNext(now)
+	if !ok || !first.Equal(at(now, 11, 0)) {
+		t.Fatalf("SkipNext = %v, %v; want today 11:00", first, ok)
+	}
+	if got, want := a.NextTrigger(now), at(now.AddDate(0, 0, 1), 11, 0); !got.Equal(want) {
+		t.Errorf("after one skip: got %v, want %v", got, want)
+	}
+	a.SkipNext(now)
+	if got, want := a.NextTrigger(now), at(now.AddDate(0, 0, 2), 11, 0); !got.Equal(want) {
+		t.Errorf("after two skips: got %v, want %v", got, want)
+	}
+
+	// A vacation longer than the 8-day search window still resolves.
+	a.SkipUntil = now.AddDate(0, 0, 15).Format(DateLayout)
+	if got, want := a.NextTrigger(now), at(now.AddDate(0, 0, 16), 11, 0); !got.Equal(want) {
+		t.Errorf("vacation: got %v, want %v", got, want)
+	}
+
+	// A skip in the past is inert.
+	a.SkipUntil = now.AddDate(0, 0, -1).Format(DateLayout)
+	if _, active := a.ActiveSkip(now); active {
+		t.Error("past skip reported active")
+	}
+	if got := a.NextTrigger(now); !got.Equal(at(now, 11, 0)) {
+		t.Errorf("past skip: got %v", got)
+	}
+
+	oneShot := clock(11, 0, [7]bool{})
+	if _, ok := oneShot.SkipNext(now); ok {
+		t.Error("one-shot alarm accepted a skip")
+	}
+}

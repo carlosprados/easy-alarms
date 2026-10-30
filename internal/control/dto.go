@@ -20,12 +20,18 @@ type AlarmDTO struct {
 	// Clock fields.
 	Time string   `json:"time,omitempty"` // "07:30"
 	Days []string `json:"days,omitempty"` // ["mon","tue"]; empty = one-shot
+	Date string   `json:"date,omitempty"` // "2026-11-02": rings once on that day
+
+	// SkipUntil is set while upcoming occurrences are skipped: the alarm stays
+	// silent through that day (inclusive) and resumes afterwards.
+	SkipUntil string `json:"skip_until,omitempty"`
 
 	// Timer fields.
 	Duration  string `json:"duration,omitempty"`  // configured length, e.g. "25m"
 	State     string `json:"state,omitempty"`     // "idle" | "running" | "paused"
 	Remaining string `json:"remaining,omitempty"` // time left while running/paused
 
+	Note  string `json:"note,omitempty"`
 	Sound string `json:"sound,omitempty"` // "" = built-in tone
 
 	NextTrigger *time.Time `json:"next_trigger,omitempty"` // includes snooze override
@@ -68,6 +74,7 @@ func ToDTO(s AlarmState, now time.Time) AlarmDTO {
 		Kind:    string(a.Kind),
 		Label:   a.Label,
 		Enabled: a.Enabled,
+		Note:    a.Note,
 		Sound:   a.Sound,
 		Snoozed: s.Snoozed,
 		Ringing: s.Ringing,
@@ -81,6 +88,10 @@ func ToDTO(s AlarmState, now time.Time) AlarmDTO {
 	case alarm.KindClock:
 		d.Time = fmt.Sprintf("%02d:%02d", a.Hour, a.Minute)
 		d.Days = DaysToStrings(a.Repeat)
+		d.Date = a.Date
+		if _, ok := a.ActiveSkip(now); ok {
+			d.SkipUntil = a.SkipUntil
+		}
 	case alarm.KindTimer:
 		d.Duration = humanize.Compact(a.Duration)
 		switch {
@@ -104,6 +115,8 @@ type CreateAlarmRequest struct {
 	Label string `json:"label,omitempty"`
 	At    string `json:"at"`             // "HH:MM"
 	Days  string `json:"days,omitempty"` // "daily"|"weekdays"|"weekend"|"mon,tue"|""
+	Date  string `json:"date,omitempty"` // "YYYY-MM-DD"|"today"|"tomorrow"; excludes Days
+	Note  string `json:"note,omitempty"`
 	Sound string `json:"sound,omitempty"`
 }
 
@@ -111,6 +124,7 @@ type CreateAlarmRequest struct {
 type CreateTimerRequest struct {
 	Label    string `json:"label,omitempty"`
 	Duration string `json:"duration"` // Go duration, > 0
+	Note     string `json:"note,omitempty"`
 	Sound    string `json:"sound,omitempty"`
 	Start    *bool  `json:"start,omitempty"` // default true
 }
@@ -121,7 +135,15 @@ type UpdateAlarmRequest struct {
 	At       *string `json:"at,omitempty"`       // clock only
 	Days     *string `json:"days,omitempty"`     // clock only
 	Duration *string `json:"duration,omitempty"` // timer only
+	Date     *string `json:"date,omitempty"`     // clock only; "" clears
+	Note     *string `json:"note,omitempty"`     // "" clears
 	Sound    *string `json:"sound,omitempty"`
+}
+
+// SkipRequest skips a repeating alarm through Until (inclusive, a date as in
+// CreateAlarmRequest). Empty Until skips just the next occurrence.
+type SkipRequest struct {
+	Until string `json:"until,omitempty"`
 }
 
 // SnoozeRequest carries the snooze length; empty means the 5m default.

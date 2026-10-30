@@ -106,13 +106,13 @@ func (u *UI) Run(hidden bool) {
 	// not the dimmed/disabled colour: on some monitors the dim grey is barely
 	// legible. Hierarchy is carried by the clock's larger, bold size instead.
 	fg := theme.Color(theme.ColorNameForeground)
-	u.clock = rowText("", 40, true, fg)
+	u.clock = plainText("", 40, true, fg)
 	u.clock.Alignment = fyne.TextAlignCenter
-	u.clockDate = rowText("", theme.TextSize(), false, fg)
+	u.clockDate = plainText("", theme.TextSize(), false, fg)
 	u.clockDate.Alignment = fyne.TextAlignCenter
 	u.bar = newDayBar(u.location(), time.Now())
-	u.riseLbl = rowText("", theme.TextSize(), false, fg)
-	u.setLbl = rowText("", theme.TextSize(), false, fg)
+	u.riseLbl = plainText("", theme.TextSize(), false, fg)
+	u.setLbl = plainText("", theme.TextSize(), false, fg)
 	u.setLbl.Alignment = fyne.TextAlignTrailing
 	sunRow := container.NewBorder(nil, nil, u.riseLbl, u.setLbl)
 	u.updateClock(time.Now()) // paint once before Show, so it never flashes empty
@@ -211,7 +211,11 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 		fg = theme.ColorNameDisabled
 	}
 
-	title := wrapText(rowTitle(a), theme.SizeNameSubHeadingText, fg, true)
+	titleText := rowTitle(a)
+	if a.Note != "" {
+		titleText += "  📝"
+	}
+	title := wrapText(titleText, theme.SizeNameSubHeadingText, fg, true)
 
 	whenText := u.rowWhen(a, time.Now())
 	when := wrapText(whenText, theme.SizeNameText, fg, false)
@@ -221,8 +225,8 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 	// every row taller, and the edit dialog already displays it.
 	left := container.NewVBox(title, when)
 	if a.Kind == alarm.KindClock {
-		if rep := repeatLabel(a.Repeat); rep != "" {
-			left.Add(wrapText("📅  "+rep, theme.SizeNameText, fg, false))
+		if sched := scheduleLabel(a, time.Now()); sched != "" {
+			left.Add(wrapText("📅  "+sched, theme.SizeNameText, fg, false))
 		}
 	}
 
@@ -230,6 +234,7 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 		c := alarm.New(a.Kind)
 		c.Label, c.Hour, c.Minute, c.Repeat = a.Label, a.Hour, a.Minute, a.Repeat
 		c.Duration, c.Sound = a.Duration, a.Sound
+		c.Date, c.Note = a.Date, a.Note
 		u.showEditDialog(c, true) // cancelling the editor discards the copy
 	})
 	edit := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
@@ -246,6 +251,9 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 	})
 
 	actions := container.NewHBox(u.stateControl(a), dup, edit, del)
+	if skip := u.skipControl(a); skip != nil {
+		actions.Objects = append([]fyne.CanvasObject{skip}, actions.Objects...)
+	}
 
 	// Double-clicking the info area also opens the editor.
 	info := newTappable(container.NewThemeOverride(left, compactTheme{u.app.Settings().Theme()}),
@@ -254,7 +262,7 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 	return widget.NewCard("", "", container.NewPadded(body))
 }
 
-func rowText(s string, size float32, bold bool, col color.Color) *canvas.Text {
+func plainText(s string, size float32, bold bool, col color.Color) *canvas.Text {
 	t := canvas.NewText(s, col)
 	t.TextSize = size
 	t.TextStyle = fyne.TextStyle{Bold: bold}
@@ -290,6 +298,32 @@ func (c compactTheme) Size(n fyne.ThemeSizeName) float32 {
 func setRowText(t *widget.RichText, s string) {
 	t.Segments[0].(*widget.TextSegment).Text = s
 	t.Refresh()
+}
+
+// skipControl toggles skipping the next occurrence of a repeating alarm
+// (holidays). It is highlighted while a skip is pending; tapping it then
+// cancels the skip. Clock alarms with nothing to skip get it disabled, so
+// the action columns stay aligned; timers get none.
+func (u *UI) skipControl(a *alarm.Alarm) fyne.CanvasObject {
+	if a.Kind != alarm.KindClock {
+		return nil
+	}
+	_, skipping := a.ActiveSkip(time.Now())
+	b := widget.NewButtonWithIcon("", theme.MediaSkipNextIcon(), func() {
+		if _, active := a.ActiveSkip(time.Now()); active {
+			a.SkipUntil = ""
+		} else {
+			a.SkipNext(time.Now())
+		}
+		u.commit()
+	})
+	if skipping {
+		b.Importance = widget.HighImportance
+	}
+	if !a.Skippable() || !a.Enabled {
+		b.Disable()
+	}
+	return b
 }
 
 // stateControl is the per-row enable toggle (alarms) or the

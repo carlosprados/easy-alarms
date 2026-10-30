@@ -55,6 +55,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /alarms/{id}/disable", s.handleEnable(false))
 	mux.HandleFunc("POST /alarms/{id}/snooze", s.handleSnooze)
 	mux.HandleFunc("POST /alarms/{id}/dismiss", s.handleDismiss)
+	mux.HandleFunc("POST /alarms/{id}/skip", s.handleSkip)
+	mux.HandleFunc("DELETE /alarms/{id}/skip", s.handleClearSkip)
 	mux.HandleFunc("POST /timers", s.handleCreateTimer)
 	mux.HandleFunc("POST /timers/{id}/{op}", s.handleTimerOp)
 	return mux
@@ -127,8 +129,20 @@ func (s *Server) handleCreateAlarm(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusBadRequest, err)
 		return
 	}
+	var date string
+	if req.Date != "" {
+		if req.Days != "" {
+			writeStatus(w, http.StatusBadRequest, errDateAndDays)
+			return
+		}
+		if date, err = ParseDate(req.Date, time.Now()); err != nil {
+			writeStatus(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 	st, err := s.backend.CreateAlarm(ClockSpec{
-		Label: req.Label, Hour: hour, Minute: minute, Repeat: repeat, Sound: req.Sound,
+		Label: req.Label, Hour: hour, Minute: minute, Repeat: repeat, Date: date,
+		Note: req.Note, Sound: req.Sound,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -149,7 +163,7 @@ func (s *Server) handleCreateTimer(w http.ResponseWriter, r *http.Request) {
 	}
 	start := req.Start == nil || *req.Start
 	st, err := s.backend.CreateTimer(TimerSpec{
-		Label: req.Label, Duration: dur, Sound: req.Sound, Start: start,
+		Label: req.Label, Duration: dur, Note: req.Note, Sound: req.Sound, Start: start,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -165,7 +179,22 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	var p Patch
 	p.Label = req.Label
+	p.Note = req.Note
 	p.Sound = req.Sound
+	if req.Date != nil && *req.Date != "" {
+		if req.Days != nil && *req.Days != "" {
+			writeStatus(w, http.StatusBadRequest, errDateAndDays)
+			return
+		}
+		date, err := ParseDate(*req.Date, time.Now())
+		if err != nil {
+			writeStatus(w, http.StatusBadRequest, err)
+			return
+		}
+		p.Date = &date
+	} else {
+		p.Date = req.Date
+	}
 	if req.At != nil {
 		hour, minute, err := ParseClockTime(*req.At)
 		if err != nil {
@@ -254,6 +283,36 @@ func (s *Server) handleSnooze(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleSkip(w http.ResponseWriter, r *http.Request) {
+	var req SkipRequest
+	if r.ContentLength != 0 && !decode(w, r, &req) {
+		return
+	}
+	var until string
+	if req.Until != "" {
+		var err error
+		if until, err = ParseDate(req.Until, time.Now()); err != nil {
+			writeStatus(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	st, err := s.backend.Skip(r.PathValue("id"), until)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ToDTO(st, time.Now()))
+}
+
+func (s *Server) handleClearSkip(w http.ResponseWriter, r *http.Request) {
+	st, err := s.backend.ClearSkip(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ToDTO(st, time.Now()))
+}
+
 func (s *Server) handleDismiss(w http.ResponseWriter, r *http.Request) {
 	if err := s.backend.DismissRinging(r.PathValue("id")); err != nil {
 		writeErr(w, err)
@@ -263,6 +322,8 @@ func (s *Server) handleDismiss(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ---
+
+var errDateAndDays = errors.New("date and days are mutually exclusive: a dated alarm rings once")
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
@@ -287,7 +348,10 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		writeStatus(w, http.StatusNotFound, err)
-	case errors.Is(err, ErrNotRinging), errors.Is(err, ErrWrongKind), errors.Is(err, ErrBadState):
+	case errors.Is(err, ErrNeverRings):
+		writeStatus(w, http.StatusBadRequest, err)
+	case errors.Is(err, ErrNotRinging), errors.Is(err, ErrWrongKind), errors.Is(err, ErrBadState),
+		errors.Is(err, ErrNoRepeat):
 		writeStatus(w, http.StatusConflict, err)
 	default:
 		writeStatus(w, http.StatusInternalServerError, err)

@@ -25,6 +25,9 @@ type fakeBackend struct {
 	lastTimerOp  TimerOp
 	lastSnoozeID string
 	lastSnoozeD  time.Duration
+	lastSkip     string
+	createErr    error
+	skipErr      error
 }
 
 func newFake() *fakeBackend {
@@ -50,6 +53,9 @@ func (f *fakeBackend) Get(id string) (AlarmState, error) {
 }
 func (f *fakeBackend) CreateAlarm(spec ClockSpec) (AlarmState, error) {
 	f.lastClock = spec
+	if f.createErr != nil {
+		return AlarmState{}, f.createErr
+	}
 	return AlarmState{Alarm: alarm.Alarm{ID: "new", Kind: alarm.KindClock, Hour: spec.Hour, Minute: spec.Minute, Repeat: spec.Repeat, Enabled: true}}, nil
 }
 func (f *fakeBackend) CreateTimer(spec TimerSpec) (AlarmState, error) {
@@ -97,7 +103,15 @@ func (f *fakeBackend) SnoozeRinging(id string, d time.Duration) error {
 	return f.snoozeErr
 }
 func (f *fakeBackend) DismissRinging(id string) error { return f.dismissErr }
-func (f *fakeBackend) Settings() SettingsDTO          { return SettingsDTO{Lat: 40, Lon: -3} }
+func (f *fakeBackend) Skip(id, until string) (AlarmState, error) {
+	f.lastSkip = until
+	if f.skipErr != nil {
+		return AlarmState{}, f.skipErr
+	}
+	return f.Get(id)
+}
+func (f *fakeBackend) ClearSkip(id string) (AlarmState, error) { return f.Get(id) }
+func (f *fakeBackend) Settings() SettingsDTO                   { return SettingsDTO{Lat: 40, Lon: -3} }
 
 func do(t *testing.T, srv *Server, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -243,5 +257,57 @@ func TestListKindFilter(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if len(got) != 1 || got[0].Kind != "timer" {
 		t.Errorf("filtered list = %+v", got)
+	}
+}
+
+func TestCreateAlarmDate(t *testing.T) {
+	f := newFake()
+	srv := NewServer(f, "test")
+	w := do(t, srv, "POST", "/alarms", `{"at":"07:00","date":"2099-11-02","note":"guardia off"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code = %d, body %s", w.Code, w.Body)
+	}
+	if f.lastClock.Date != "2099-11-02" || f.lastClock.Note != "guardia off" {
+		t.Errorf("spec = %+v", f.lastClock)
+	}
+}
+
+func TestCreateAlarmDateErrors(t *testing.T) {
+	cases := map[string]struct {
+		body      string
+		createErr error
+		want      int
+	}{
+		"date with days": {`{"at":"07:00","date":"2099-11-02","days":"mon"}`, nil, http.StatusBadRequest},
+		"bad date":       {`{"at":"07:00","date":"2-nov"}`, nil, http.StatusBadRequest},
+		"in the past":    {`{"at":"07:00","date":"2000-01-01"}`, ErrNeverRings, http.StatusBadRequest},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFake()
+			f.createErr = c.createErr
+			w := do(t, NewServer(f, "test"), "POST", "/alarms", c.body)
+			if w.Code != c.want {
+				t.Fatalf("code = %d, body %s", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+func TestSkip(t *testing.T) {
+	f := newFake()
+	srv := NewServer(f, "test")
+	if w := do(t, srv, "POST", "/alarms/clk/skip", ""); w.Code != http.StatusOK || f.lastSkip != "" {
+		t.Fatalf("skip next: code = %d, until = %q", w.Code, f.lastSkip)
+	}
+	if w := do(t, srv, "POST", "/alarms/clk/skip", `{"until":"2099-11-10"}`); w.Code != http.StatusOK || f.lastSkip != "2099-11-10" {
+		t.Fatalf("skip until: code = %d, until = %q", w.Code, f.lastSkip)
+	}
+	if w := do(t, srv, "DELETE", "/alarms/clk/skip", ""); w.Code != http.StatusOK {
+		t.Fatalf("clear: code = %d", w.Code)
+	}
+	f.skipErr = ErrNoRepeat
+	if w := do(t, srv, "POST", "/alarms/clk/skip", ""); w.Code != http.StatusConflict {
+		t.Fatalf("not repeating: code = %d", w.Code)
 	}
 }

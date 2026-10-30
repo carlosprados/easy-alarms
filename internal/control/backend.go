@@ -7,10 +7,12 @@ import (
 
 // Sentinel errors the Backend returns; the server maps them to HTTP codes.
 var (
-	ErrNotFound   = errors.New("alarm not found")                         // -> 404
-	ErrNotRinging = errors.New("alarm is not ringing")                    // -> 409
-	ErrWrongKind  = errors.New("operation not valid for this alarm kind") // -> 409
-	ErrBadState   = errors.New("invalid state transition")                // -> 409
+	ErrNotFound   = errors.New("alarm not found")                                           // -> 404
+	ErrNotRinging = errors.New("alarm is not ringing")                                      // -> 409
+	ErrWrongKind  = errors.New("operation not valid for this alarm kind")                   // -> 409
+	ErrBadState   = errors.New("invalid state transition")                                  // -> 409
+	ErrNoRepeat   = errors.New("only repeating clock alarms can be skipped")                // -> 409
+	ErrNeverRings = errors.New("the alarm would never ring: date and time are in the past") // -> 400
 )
 
 // TimerOp is a timer lifecycle action.
@@ -29,6 +31,8 @@ type ClockSpec struct {
 	Hour   int
 	Minute int
 	Repeat [7]bool
+	Date   string // "YYYY-MM-DD"; mutually exclusive with Repeat
+	Note   string
 	Sound  string
 }
 
@@ -36,6 +40,7 @@ type ClockSpec struct {
 type TimerSpec struct {
 	Label    string
 	Duration time.Duration
+	Note     string
 	Sound    string
 	Start    bool
 }
@@ -47,6 +52,8 @@ type Patch struct {
 	Minute   *int
 	Repeat   *[7]bool
 	Duration *time.Duration
+	Date     *string // "" clears; a date clears Repeat and vice versa
+	Note     *string
 	Sound    *string
 }
 
@@ -62,6 +69,8 @@ type Backend interface {
 	Delete(id string) error
 	SetEnabled(id string, on bool) (AlarmState, error) // clock alarms only
 	TimerOp(id string, op TimerOp) (AlarmState, error) // timers only
+	Skip(id, until string) (AlarmState, error)         // until "" = next occurrence
+	ClearSkip(id string) (AlarmState, error)
 	SnoozeRinging(id string, d time.Duration) error
 	DismissRinging(id string) error
 	Settings() SettingsDTO
