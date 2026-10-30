@@ -67,7 +67,7 @@ type UI struct {
 
 type row struct {
 	alarm *alarm.Alarm
-	when  *canvas.Text
+	when  *widget.RichText
 	last  string // last rendered text, to skip no-op refreshes
 }
 
@@ -206,15 +206,15 @@ func (u *UI) sortAlarms(alarms []*alarm.Alarm) {
 func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 	// Inactive alarms (won't actually ring) are dimmed.
 	active := !u.sched.NextFor(a).IsZero()
-	fg := theme.Color(theme.ColorNameForeground)
+	fg := theme.ColorNameForeground
 	if !active {
-		fg = theme.Color(theme.ColorNameDisabled)
+		fg = theme.ColorNameDisabled
 	}
 
-	title := rowText(rowTitle(a), 17, true, fg)
+	title := wrapText(rowTitle(a), theme.SizeNameSubHeadingText, fg, true)
 
 	whenText := u.rowWhen(a, time.Now())
-	when := rowText(whenText, theme.TextSize(), false, fg)
+	when := wrapText(whenText, theme.SizeNameText, fg, false)
 	u.rows = append(u.rows, &row{alarm: a, when: when, last: whenText})
 
 	// The sound is deliberately not shown here: it's secondary info that made
@@ -222,7 +222,7 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 	left := container.NewVBox(title, when)
 	if a.Kind == alarm.KindClock {
 		if rep := repeatLabel(a.Repeat); rep != "" {
-			left.Add(rowText("📅  "+rep, theme.TextSize(), false, fg))
+			left.Add(wrapText("📅  "+rep, theme.SizeNameText, fg, false))
 		}
 	}
 
@@ -248,7 +248,8 @@ func (u *UI) newRow(a *alarm.Alarm) fyne.CanvasObject {
 	actions := container.NewHBox(u.stateControl(a), dup, edit, del)
 
 	// Double-clicking the info area also opens the editor.
-	info := newTappable(left, func() { u.showEditDialog(a, false) })
+	info := newTappable(container.NewThemeOverride(left, compactTheme{u.app.Settings().Theme()}),
+		func() { u.showEditDialog(a, false) })
 	body := container.NewBorder(nil, nil, nil, actions, info)
 	return widget.NewCard("", "", container.NewPadded(body))
 }
@@ -258,6 +259,37 @@ func rowText(s string, size float32, bold bool, col color.Color) *canvas.Text {
 	t.TextSize = size
 	t.TextStyle = fyne.TextStyle{Bold: bold}
 	return t
+}
+
+// wrapText word-wraps so a long label never sets the window's minimum width.
+func wrapText(s string, size fyne.ThemeSizeName, col fyne.ThemeColorName, bold bool) *widget.RichText {
+	t := widget.NewRichText(&widget.TextSegment{Text: s, Style: widget.RichTextStyle{
+		ColorName: col,
+		SizeName:  size,
+		TextStyle: fyne.TextStyle{Bold: bold},
+		Inline:    true,
+	}})
+	t.Wrapping = fyne.TextWrapWord
+	return t
+}
+
+// compactTheme removes the inner padding RichText puts around every line, so
+// wrapped rows stay as tight as the plain canvas.Text they replaced.
+type compactTheme struct{ fyne.Theme }
+
+func (c compactTheme) Size(n fyne.ThemeSizeName) float32 {
+	switch n {
+	case theme.SizeNameInnerPadding:
+		return 0
+	case theme.SizeNamePadding:
+		return 2
+	}
+	return c.Theme.Size(n)
+}
+
+func setRowText(t *widget.RichText, s string) {
+	t.Segments[0].(*widget.TextSegment).Text = s
+	t.Refresh()
 }
 
 // stateControl is the per-row enable toggle (alarms) or the
@@ -452,8 +484,7 @@ func (u *UI) refreshLoop() {
 				next := u.rowWhen(r.alarm, now)
 				if next != r.last {
 					r.last = next
-					r.when.Text = next
-					r.when.Refresh()
+					setRowText(r.when, next)
 				}
 			}
 			u.updateTrayNext()
